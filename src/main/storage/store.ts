@@ -16,7 +16,10 @@ const mattersDir = () => path.join(userData(), 'matters')
 
 function defaultSettings(): Settings {
   return {
+    provider: 'anthropic',
     model: 'claude-opus-4-8',
+    ollamaBaseUrl: 'http://127.0.0.1:11434',
+    ollamaModel: '',
     matterRoot: path.join(app.getPath('documents'), 'DeepSolve Legal'),
     profile: '',
     autoApproveReads: true

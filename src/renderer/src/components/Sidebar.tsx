@@ -1,8 +1,10 @@
-import { useStore } from '../state/store'
-import { Scale, LayoutGrid, Library, Settings as SettingsIcon, FileText, KeyRound, Loader2 } from 'lucide-react'
+import { useStore, providerReady } from '../state/store'
+import { Scale, LayoutGrid, Library, Settings as SettingsIcon, FileText, KeyRound, Cpu, Loader2 } from 'lucide-react'
 
 export default function Sidebar(): JSX.Element {
-  const { route, setRoute, matters, openMatter, currentMatterId, keyPresent, runningMatters } = useStore()
+  const { route, setRoute, matters, openMatter, currentMatterId, settings, keyPresent, runningMatters } = useStore()
+  const ready = providerReady(settings, keyPresent)
+  const isLocal = settings?.provider === 'ollama'
 
   return (
     <aside className="w-64 shrink-0 bg-ink-900 border-r border-ink-700/60 flex flex-col">
@@ -51,12 +53,20 @@ export default function Sidebar(): JSX.Element {
         ))}
       </div>
 
-      {!keyPresent && (
+      {!ready && (
         <button
           onClick={() => setRoute('settings')}
           className="m-3 px-3 py-2 rounded-md bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-2 hover:bg-amber-500/20"
         >
-          <KeyRound className="w-3.5 h-3.5" /> Add your API key to begin
+          {isLocal ? (
+            <>
+              <Cpu className="w-3.5 h-3.5" /> Select a local model to begin
+            </>
+          ) : (
+            <>
+              <KeyRound className="w-3.5 h-3.5" /> Add your API key to begin
+            </>
+          )}
         </button>
       )}
     </aside>

@@ -14,6 +14,16 @@ import type {
 
 export type Route = 'launchpad' | 'workspace' | 'settings' | 'library' | 'collection'
 
+/**
+ * Whether the active provider is ready to run a workflow. For Anthropic that
+ * means an API key is saved (`keyPresent`); for the local provider it means a
+ * model has been selected (there is no key to set).
+ */
+export function providerReady(settings: Settings | null, keyPresent: boolean): boolean {
+  if (!settings) return false
+  return settings.provider === 'ollama' ? !!settings.ollamaModel : keyPresent
+}
+
 interface IndexProgress {
   phase: string
   done: number

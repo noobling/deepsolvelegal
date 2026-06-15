@@ -54,8 +54,16 @@ export const MODELS = [
 
 export type ModelId = (typeof MODELS)[number]['id']
 
+export type LlmProvider = 'anthropic' | 'ollama'
+
 export interface Settings {
+  /** Which LLM backend to use. */
+  provider: LlmProvider
   model: ModelId
+  /** Local Ollama server URL (when provider === 'ollama'). */
+  ollamaBaseUrl: string
+  /** Selected local model name (when provider === 'ollama'). */
+  ollamaModel: string
   /** Default folder where matters & deliverables are written. */
   matterRoot: string
   /** Practice profile (the claude-for-legal CLAUDE.md analog). */
@@ -227,6 +235,9 @@ export interface Api {
     set: (apiKey: string) => Promise<KeyStatus>
     clear: () => Promise<KeyStatus>
     test: () => Promise<TestConnectionResult>
+  }
+  ollama: {
+    models: () => Promise<string[]>
   }
   matters: {
     list: () => Promise<Matter[]>

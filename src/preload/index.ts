@@ -23,6 +23,9 @@ const api: Api = {
     clear: () => ipcRenderer.invoke('key:clear'),
     test: () => ipcRenderer.invoke('key:test')
   },
+  ollama: {
+    models: () => ipcRenderer.invoke('ollama:models')
+  },
   matters: {
     list: () => ipcRenderer.invoke('matters:list'),
     get: (id: string) => ipcRenderer.invoke('matters:get', id),

@@ -1,4 +1,5 @@
 import type { ToolDef } from './types'
+import type { ToolSpec } from '../agent/provider'
 import { listDir, readFile, searchFiles, writeFile } from './filesystem'
 import { readPdf, readDocx, readXlsx, writeDocx, writeXlsx } from './office'
 import { fetchUrl } from './web'
@@ -25,37 +26,36 @@ export const LOCAL_TOOLS: Record<string, ToolDef> = {
 const SERVER_TOOLS = new Set(['web_search'])
 
 export interface BuiltTools {
-  anthropicTools: Record<string, unknown>[]
+  /** Provider-neutral custom tool specs. */
+  tools: ToolSpec[]
+  /** Local dispatch map (name → executable tool). */
   local: Record<string, ToolDef>
+  /** Server-side tool names (e.g. web_search) — only some providers support these. */
+  serverTools: string[]
 }
 
 /**
- * Given a workflow's allowed tool names, produce the tool definitions to send
- * to the Anthropic API plus the local dispatch map. We always include the core
- * read tools (so the agent can navigate the workspace) and search_library (so it
- * can pull relevant documents from the user's indexed Library in any workflow).
+ * Given a workflow's allowed tool names, produce provider-neutral tool specs,
+ * the local dispatch map, and any server-side tool names. We always include the
+ * core read tools (so the agent can navigate the workspace) and search_library
+ * (so it can pull relevant documents from the indexed Library in any workflow).
  */
 export function buildTools(allowed: string[]): BuiltTools {
   const names = new Set<string>([...allowed, 'list_dir', 'read_file', 'search_files', 'search_library'])
-  const anthropicTools: Record<string, unknown>[] = []
+  const tools: ToolSpec[] = []
   const local: Record<string, ToolDef> = {}
+  const serverTools: string[] = []
 
   for (const name of names) {
     if (SERVER_TOOLS.has(name)) {
-      if (name === 'web_search') {
-        anthropicTools.push({ type: 'web_search_20250305', name: 'web_search', max_uses: 6 })
-      }
+      serverTools.push(name)
       continue
     }
     const def = LOCAL_TOOLS[name]
     if (!def) continue
     local[name] = def
-    anthropicTools.push({
-      name: def.name,
-      description: def.description,
-      input_schema: def.inputSchema
-    })
+    tools.push({ name: def.name, description: def.description, inputSchema: def.inputSchema })
   }
 
-  return { anthropicTools, local }
+  return { tools, local, serverTools }
 }

@@ -12,7 +12,8 @@ import {
   saveDocs,
   saveLexical
 } from './store'
-import { getClient } from '../agent/anthropic'
+import { getProvider } from '../agent/provider'
+import { getSettings } from '../storage/store'
 
 type Emit = (e: IndexEvent) => void
 
@@ -168,8 +169,10 @@ async function enrich(
   lexical: LexicalIndex,
   emit: Emit
 ): Promise<void> {
-  const client = await getClient()
-  if (!client) return
+  const settings = await getSettings()
+  const provider = getProvider(settings)
+  const model = settings.provider === 'ollama' ? settings.ollamaModel : 'claude-haiku-4-5-20251001'
+  if (!model) return
   const pending = docs.filter((d) => !d.summary)
   const batchSize = 5
   let done = 0
@@ -186,15 +189,13 @@ async function enrich(
       excerpt: (lexical.snippets[d.id] || '').slice(0, 1500)
     }))
     try {
-      const res = await client.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
+      const raw = await provider.complete({
         system:
           'You catalog legal documents. For each item return a JSON object with: id, docType (short, e.g. "Email", "NDA", "Invoice", "Letter"), summary (one concise sentence), parties (array of names/orgs mentioned). Respond with ONLY a JSON array, no prose.',
-        messages: [{ role: 'user', content: JSON.stringify(payload) }]
+        prompt: JSON.stringify(payload),
+        model,
+        maxTokens: 1024
       })
-      const textBlock = res.content.find((b) => b.type === 'text')
-      const raw = textBlock && 'text' in textBlock ? textBlock.text : '[]'
       const json = raw.slice(raw.indexOf('['), raw.lastIndexOf(']') + 1)
       const parsed = JSON.parse(json) as Array<{
         id: string

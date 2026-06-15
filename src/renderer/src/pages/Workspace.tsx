@@ -3,6 +3,7 @@ import { useStore } from '../state/store'
 import { workflowById } from '@shared/workflows'
 import Deliverable from '../components/Deliverable'
 import ActivityRail from '../components/ActivityRail'
+import DataNotice from '../components/DataNotice'
 import { ArrowLeft, FileDown, Loader2, FileText, FileSpreadsheet, FileType } from 'lucide-react'
 
 export default function Workspace(): JSX.Element {
@@ -50,6 +51,8 @@ export default function Workspace(): JSX.Element {
           )}
         </div>
       </header>
+
+      <DataNotice compact />
 
       <div className="flex-1 min-h-0 flex">
         <div className="flex-1 min-w-0">

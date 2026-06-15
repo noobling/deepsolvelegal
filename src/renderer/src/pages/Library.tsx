@@ -11,7 +11,8 @@ import {
   Plus,
   Sparkles,
   X,
-  FileStack
+  FileStack,
+  HardDrive
 } from 'lucide-react'
 
 export default function Library(): JSX.Element {
@@ -29,6 +30,10 @@ export default function Library(): JSX.Element {
             <p className="text-ink-600 mt-2 text-[15px]">
               Index a folder of documents — emails, contracts, anything — into a searchable, exportable catalog.
             </p>
+            <div className="mt-2.5 inline-flex items-center gap-1.5 text-[11.5px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-full px-2.5 py-1">
+              <HardDrive className="w-3.5 h-3.5" /> Indexing &amp; search run 100% on your computer — no documents leave the device
+              <span className="text-emerald-300/60">(unless you enable AI summaries)</span>
+            </div>
           </div>
           <button
             onClick={() => setShowNew(true)}

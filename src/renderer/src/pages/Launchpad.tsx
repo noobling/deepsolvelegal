@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { PRACTICE_AREAS, WORKFLOWS } from '@shared/workflows'
 import ActionCard from '../components/ActionCard'
 import Icon from '../components/Icon'
+import DataNotice from '../components/DataNotice'
 import { Search } from 'lucide-react'
 
 export default function Launchpad(): JSX.Element {
@@ -34,6 +35,8 @@ export default function Launchpad(): JSX.Element {
             />
           </div>
         </header>
+
+        <DataNotice />
 
         {PRACTICE_AREAS.map((area) => {
           const items = filtered.filter((w) => w.area === area.id)

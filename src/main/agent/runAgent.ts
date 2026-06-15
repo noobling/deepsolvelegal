@@ -4,7 +4,7 @@ import { existsSync } from 'fs'
 import type Anthropic from '@anthropic-ai/sdk'
 import type { AgentEvent, StartThreadInput, SendMessageInput } from '@shared/types'
 import { workflowById } from '@shared/workflows'
-import { getClient } from './anthropic'
+import { getProvider, activeModel } from './provider'
 import { buildSystemPrompt } from './systemPrompts'
 import { buildTools } from '../tools/registry'
 import type { ToolContext } from '../tools/types'
@@ -27,7 +27,7 @@ type Emit = (e: AgentEvent) => void
 const MAX_ITERATIONS = 16
 
 interface ActiveRun {
-  stream?: { abort: () => void }
+  controller?: AbortController
   cancelled: boolean
 }
 const active = new Map<string, ActiveRun>()
@@ -115,7 +115,7 @@ export function cancel(matterId: string): void {
   const run = active.get(matterId)
   if (run) {
     run.cancelled = true
-    run.stream?.abort()
+    run.controller?.abort()
   }
   denyAllPending()
 }
@@ -125,13 +125,21 @@ async function runTurn(matterId: string, emit: Emit): Promise<void> {
   active.set(matterId, run)
 
   try {
-    const client = await getClient()
-    if (!client) {
-      emit({ type: 'error', matterId, message: 'No Anthropic API key set. Add one in Settings.' })
+    const settings = await getSettings()
+    const provider = getProvider(settings)
+    const model = activeModel(settings)
+    if (!model) {
+      emit({
+        type: 'error',
+        matterId,
+        message:
+          settings.provider === 'ollama'
+            ? 'No local model selected. Pick an Ollama model in Settings.'
+            : 'No model selected. Choose a model in Settings.'
+      })
       emit({ type: 'done', matterId })
       return
     }
-    const settings = await getSettings()
 
     // Determine workflow from the matter meta (re-read by loading any message context).
     const detail = await getMatter(matterId)
@@ -142,7 +150,7 @@ async function runTurn(matterId: string, emit: Emit): Promise<void> {
       return
     }
 
-    const { anthropicTools, local } = buildTools(workflow.tools)
+    const { tools, local, serverTools } = buildTools(workflow.tools)
     const system = buildSystemPrompt(workflow, settings, '(see the conversation)')
 
     const ctx: ToolContext = {
@@ -169,37 +177,36 @@ async function runTurn(matterId: string, emit: Emit): Promise<void> {
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
       if (run.cancelled) break
 
-      const stream = client.messages.stream({
-        model: settings.model,
-        max_tokens: 8000,
-        system,
-        tools: anthropicTools as unknown as Anthropic.Tool[],
-        messages: apiMessages
-      })
-      run.stream = stream
+      const controller = new AbortController()
+      run.controller = controller
 
-      stream.on('text', (delta: string) => {
-        assembled += delta
-        emit({ type: 'text', matterId, messageId, delta })
-      })
-
-      let finalMessage: Anthropic.Message
+      let turn: Awaited<ReturnType<typeof provider.runTurn>>
       try {
-        finalMessage = await stream.finalMessage()
+        turn = await provider.runTurn({
+          system,
+          messages: apiMessages,
+          tools,
+          serverTools,
+          model,
+          maxTokens: 8000,
+          onText: (delta) => {
+            assembled += delta
+            emit({ type: 'text', matterId, messageId, delta })
+          },
+          signal: controller.signal
+        })
       } catch (e) {
         if (run.cancelled) break
         emit({ type: 'error', matterId, message: (e as Error).message })
         break
       }
 
-      apiMessages.push({ role: 'assistant', content: finalMessage.content })
+      apiMessages.push({ role: 'assistant', content: turn.assistantContent })
       await setApiMessages(matterId, apiMessages)
       await updateMessageText(matterId, messageId, assembled)
 
-      const toolUses = finalMessage.content.filter(
-        (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use'
-      )
-      if (finalMessage.stop_reason !== 'tool_use' || toolUses.length === 0) {
+      const toolUses = turn.toolUses
+      if (turn.stopReason !== 'tool_use' || toolUses.length === 0) {
         break
       }
 

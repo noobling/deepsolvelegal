@@ -22,7 +22,8 @@ import {
   setSettings
 } from './storage/store'
 import { clearApiKey, hasApiKey, setApiKey } from './secureKey'
-import { testConnection } from './agent/anthropic'
+import { getProvider } from './agent/provider'
+import { createOllamaProvider } from './agent/ollama'
 import { cancel, sendMessage, startThread } from './agent/runAgent'
 import { resolvePermission } from './permissions'
 import { markdownToDocx, markdownToPdf, markdownToXlsx, rowsToXlsx } from './export/convert'
@@ -74,8 +75,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     return res.canceled ? null : res.filePaths[0]
   })
 
-  // API key
-  ipcMain.handle('key:status', async () => ({ present: await hasApiKey() }))
+  // API key / provider readiness
+  ipcMain.handle('key:status', async () => {
+    const settings = await getSettings()
+    // For the local provider there's no key to set — readiness is the Ollama side.
+    return { present: settings.provider === 'ollama' ? true : await hasApiKey() }
+  })
   ipcMain.handle('key:set', async (_e, apiKey: string) => {
     await setApiKey(apiKey)
     return { present: await hasApiKey() }
@@ -84,7 +89,15 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     await clearApiKey()
     return { present: await hasApiKey() }
   })
-  ipcMain.handle('key:test', () => testConnection())
+  ipcMain.handle('key:test', async () => {
+    const settings = await getSettings()
+    return getProvider(settings).test()
+  })
+  ipcMain.handle('ollama:models', async () => {
+    const settings = await getSettings()
+    const p = createOllamaProvider(settings.ollamaBaseUrl || 'http://127.0.0.1:11434')
+    return p.listModels ? p.listModels() : []
+  })
 
   // Matters
   ipcMain.handle('matters:list', () => listMatters())

@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import { workflowById } from '@shared/workflows'
-import { useStore } from '../state/store'
+import { useStore, providerReady } from '../state/store'
 import Icon from './Icon'
 import { X, Paperclip, FileText, Play } from 'lucide-react'
 
 export default function IntakePanel({ workflowId }: { workflowId: string }): JSX.Element | null {
-  const { closeIntake, startWorkflow, keyPresent, setRoute } = useStore()
+  const { closeIntake, startWorkflow, settings, keyPresent, setRoute } = useStore()
   const workflow = workflowById(workflowId)
+  const ready = providerReady(settings, keyPresent)
+  const isLocal = settings?.provider === 'ollama'
   const [values, setValues] = useState<Record<string, string>>({})
   const [files, setFiles] = useState<string[]>([])
   const [error, setError] = useState('')
@@ -21,8 +23,12 @@ export default function IntakePanel({ workflowId }: { workflowId: string }): JSX
   }
 
   const submit = async (): Promise<void> => {
-    if (!keyPresent) {
-      setError('Add your Anthropic API key in Settings first.')
+    if (!ready) {
+      setError(
+        isLocal
+          ? 'Select a local model in Settings first.'
+          : 'Add your Anthropic API key in Settings first.'
+      )
       return
     }
     for (const f of workflow.intakeFields) {
@@ -129,12 +135,12 @@ export default function IntakePanel({ workflowId }: { workflowId: string }): JSX
 
         <div className="px-6 py-4 border-t border-ink-700/60 flex items-center gap-3">
           {error && <span className="text-[12.5px] text-red-400 flex-1">{error}</span>}
-          {!error && !keyPresent && (
+          {!error && !ready && (
             <button onClick={() => setRoute('settings')} className="text-[12.5px] text-amber-300 flex-1 text-left">
-              No API key yet — open Settings →
+              {isLocal ? 'No local model selected — open Settings →' : 'No API key yet — open Settings →'}
             </button>
           )}
-          {!error && keyPresent && <div className="flex-1" />}
+          {!error && ready && <div className="flex-1" />}
           <button onClick={closeIntake} className="px-4 py-2 rounded-lg text-sm text-slate-300 hover:bg-ink-800">
             Cancel
           </button>
