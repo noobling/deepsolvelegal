@@ -6,7 +6,9 @@ import type { AgentEvent, StartThreadInput, SendMessageInput } from '@shared/typ
 import { workflowById } from '@shared/workflows'
 import { getProvider, activeModel } from './provider'
 import { buildSystemPrompt } from './systemPrompts'
+import { verifyCitations, citationFooter } from './verify'
 import { buildTools } from '../tools/registry'
+import { extractText, INDEXABLE_EXTENSIONS } from '../library/extract'
 import type { ToolContext } from '../tools/types'
 import { requestPermission, denyAllPending } from '../permissions'
 import {
@@ -67,6 +69,27 @@ async function importFiles(matterId: string, files: string[]): Promise<string[]>
     }
   }
   return out
+}
+
+/** Concatenate the extractable text of every document in the matter workspace. */
+async function gatherSourceText(filesDir: string): Promise<string> {
+  let entries: string[]
+  try {
+    entries = await fs.readdir(filesDir)
+  } catch {
+    return ''
+  }
+  const parts: string[] = []
+  for (const name of entries) {
+    if (!INDEXABLE_EXTENSIONS.includes(path.extname(name).toLowerCase())) continue
+    try {
+      const { text } = await extractText(path.join(filesDir, name))
+      if (text) parts.push(text)
+    } catch {
+      /* unreadable file — skip */
+    }
+  }
+  return parts.join('\n\n')
 }
 
 export async function startThread(input: StartThreadInput, emit: Emit): Promise<{ matterId: string }> {
@@ -251,6 +274,24 @@ async function runTurn(matterId: string, emit: Emit): Promise<void> {
       if (run.cancelled) break
       apiMessages.push({ role: 'user', content: toolResults })
       await setApiMessages(matterId, apiMessages)
+    }
+
+    // Deterministic citation check: flag any section reference in the deliverable
+    // that does not exist in the source document(s). Catches invented citations
+    // (a common local-model failure) without trusting the model to self-check.
+    if (!run.cancelled && assembled.trim()) {
+      try {
+        const source = await gatherSourceText(ctx.filesDir)
+        if (source) {
+          const footer = citationFooter(verifyCitations(assembled, source))
+          if (footer) {
+            assembled += footer
+            emit({ type: 'text', matterId, messageId, delta: footer })
+          }
+        }
+      } catch {
+        /* verification is best-effort; never block the deliverable */
+      }
     }
 
     await updateMessageText(matterId, messageId, assembled)

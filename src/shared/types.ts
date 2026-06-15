@@ -32,6 +32,12 @@ export interface Workflow {
   tools: string[]
   /** System prompt adapted from the matching claude-for-legal skill. */
   systemPrompt: string
+  /**
+   * Extra scaffolding (coverage checklist, self-audit) appended only for weak
+   * local models. Omitted for cloud models, which don't need it and do better
+   * with more latitude.
+   */
+  localGuidance?: string
   /** Optional one-liner shown while running. */
   runningLabel?: string
 }
@@ -53,6 +59,103 @@ export const MODELS = [
 ] as const
 
 export type ModelId = (typeof MODELS)[number]['id']
+
+// ---- Local (Ollama) model guidance ----
+
+/** How much caution a local model warrants for legal work. */
+export type LegalRiskLevel = 'elevated' | 'high' | 'severe'
+
+export interface LocalModelInfo {
+  /** Lowercase substring matched against the Ollama model name (most specific first). */
+  match: string
+  label: string
+  /** Relative local capability, 1 (weak) … 5 (strongest runnable locally). */
+  power: number
+  /** Approximate memory footprint while loaded. */
+  ram: string
+  risk: LegalRiskLevel
+  /** One-line guidance on fitness for legal work. */
+  note: string
+}
+
+/**
+ * Capability + legal-risk notes for common local models. Ordered most-specific
+ * first so `localModelInfo` matches e.g. "qwen2.5:32b" before "qwen2.5".
+ * Power is relative to what a workstation can realistically run — even a 5/5
+ * local model sits well below the cloud Claude models for legal reasoning.
+ */
+export const LOCAL_MODELS: LocalModelInfo[] = [
+  {
+    match: 'qwen2.5:32b',
+    label: 'Qwen2.5 32B',
+    power: 5,
+    ram: '~20 GB',
+    risk: 'elevated',
+    note: 'Strongest local option for reasoning and tool use. Needs ≥32 GB RAM and runs slowly; heavy load can lag the machine.'
+  },
+  {
+    match: 'qwen2.5:14b',
+    label: 'Qwen2.5 14B',
+    power: 4,
+    ram: '~10 GB',
+    risk: 'elevated',
+    note: 'Best balance for local legal triage and drafting. Reliable tool-calling; comfortable on 16–32 GB.'
+  },
+  {
+    match: 'qwen2.5',
+    label: 'Qwen2.5 7B',
+    power: 3,
+    ram: '~5 GB',
+    risk: 'high',
+    note: 'Fast and light. Usable for summaries and first drafts; weaker on subtle clause analysis.'
+  },
+  {
+    match: 'llama3.3',
+    label: 'Llama 3.3 70B',
+    power: 5,
+    ram: '~40 GB',
+    risk: 'elevated',
+    note: 'Very capable but needs ≥48 GB RAM — impractical on most laptops.'
+  },
+  {
+    match: 'llama3.1',
+    label: 'Llama 3.1 8B',
+    power: 3,
+    ram: '~5 GB',
+    risk: 'high',
+    note: 'Solid general default with tool support. Fine for triage; independently verify any legal conclusion.'
+  },
+  {
+    match: 'llama3.2',
+    label: 'Llama 3.2 3B',
+    power: 1,
+    ram: '~2 GB',
+    risk: 'severe',
+    note: 'Tiny and fast. Quick text only — not reliable for legal analysis or tool-heavy workflows.'
+  },
+  {
+    match: 'mixtral',
+    label: 'Mixtral 8x7B',
+    power: 4,
+    ram: '~26 GB',
+    risk: 'elevated',
+    note: 'Capable mixture-of-experts model; fast for its size but memory-hungry.'
+  },
+  {
+    match: 'mistral',
+    label: 'Mistral 7B',
+    power: 2,
+    ram: '~5 GB',
+    risk: 'high',
+    note: 'Lightweight. Inconsistent tool-calling; better for plain drafting than analysis.'
+  }
+]
+
+/** Best-effort capability/risk lookup for a local model name; null if unknown. */
+export function localModelInfo(name: string): LocalModelInfo | null {
+  const n = (name || '').toLowerCase()
+  return LOCAL_MODELS.find((m) => n.includes(m.match)) ?? null
+}
 
 export type LlmProvider = 'anthropic' | 'ollama'
 

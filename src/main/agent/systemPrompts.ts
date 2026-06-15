@@ -15,10 +15,17 @@ export function buildSystemPrompt(workflow: Workflow, settings: Settings, intake
     ? `\n\n## The user's practice profile\nApply this throughout (house style, escalation rules, preferences):\n${settings.profile.trim()}`
     : ''
 
+  // Extra checklist/self-audit scaffolding helps weak local models but only adds
+  // verbosity and constrains stronger cloud models, so gate it on the provider.
+  const guidance =
+    settings.provider === 'ollama' && workflow.localGuidance
+      ? `\n\n## Review discipline\n${workflow.localGuidance}`
+      : ''
+
   return `${BASE}
 
 ## Current task: ${workflow.title}
-${workflow.systemPrompt}
+${workflow.systemPrompt}${guidance}
 
 ## Intake provided by the user
 ${intakeSummary}${profile}`

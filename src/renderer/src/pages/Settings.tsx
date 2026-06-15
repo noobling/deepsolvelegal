@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useStore } from '../state/store'
-import { MODELS } from '@shared/types'
-import type { LlmProvider } from '@shared/types'
+import { MODELS, localModelInfo } from '@shared/types'
+import type { LlmProvider, LegalRiskLevel, LocalModelInfo } from '@shared/types'
 import {
   KeyRound,
   Check,
@@ -14,7 +14,10 @@ import {
   Lock,
   ArrowRight,
   Cpu,
-  RefreshCw
+  RefreshCw,
+  Gauge,
+  AlertTriangle,
+  Scale
 } from 'lucide-react'
 
 export default function Settings(): JSX.Element {
@@ -214,6 +217,9 @@ export default function Settings(): JSX.Element {
               </p>
             )}
 
+            {/* Capability + legal-risk guidance for the selected local model */}
+            {settings.ollamaModel && <LocalModelGuidance model={settings.ollamaModel} />}
+
             <div className="flex items-center gap-3 mt-3">
               <button
                 onClick={() => void test()}
@@ -389,6 +395,71 @@ export default function Settings(): JSX.Element {
           />
           <p className="text-[11.5px] text-ink-600 mt-1.5">Saved automatically.</p>
         </section>
+      </div>
+    </div>
+  )
+}
+
+const RISK_STYLES: Record<LegalRiskLevel, { label: string; cls: string }> = {
+  elevated: { label: 'Elevated risk', cls: 'text-amber-300 bg-amber-500/15 border-amber-500/40' },
+  high: { label: 'High risk', cls: 'text-orange-300 bg-orange-500/15 border-orange-500/40' },
+  severe: { label: 'Severe risk', cls: 'text-red-300 bg-red-500/15 border-red-500/40' }
+}
+
+function PowerMeter({ power }: { power: number }): JSX.Element {
+  return (
+    <span className="flex items-center gap-1" title={`Capability ${power} / 5 (relative to other local models)`}>
+      {[1, 2, 3, 4, 5].map((i) => (
+        <span
+          key={i}
+          className={`h-3.5 w-1.5 rounded-sm ${i <= power ? 'bg-accent' : 'bg-ink-700'}`}
+        />
+      ))}
+    </span>
+  )
+}
+
+/**
+ * Shows the capability rating and legal-work risk for the selected local model,
+ * plus the caution that applies to every on-device model. Unknown models fall
+ * back to a generic "unrated" note rather than implying they are vetted.
+ */
+function LocalModelGuidance({ model }: { model: string }): JSX.Element {
+  const info: LocalModelInfo | null = localModelInfo(model)
+  const risk = RISK_STYLES[info?.risk ?? 'high']
+
+  return (
+    <div className="mt-3 space-y-2">
+      <div className="rounded-xl border border-ink-700 bg-ink-950/50 p-3.5">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Gauge className="w-4 h-4 text-accent" />
+          <span className="text-[13px] font-medium text-slate-100">{info?.label ?? model}</span>
+          <PowerMeter power={info?.power ?? 0} />
+          {info && <span className="text-[11px] text-ink-600">{info.ram} in memory</span>}
+          <span
+            className={`ml-auto text-[10.5px] font-semibold tracking-wide border rounded-full px-2 py-0.5 ${risk.cls}`}
+          >
+            {risk.label}
+          </span>
+        </div>
+        <p className="mt-2 text-[12px] text-slate-300 leading-relaxed">
+          {info?.note ??
+            'Not a recognized model — capability and tool-calling reliability are unrated. Treat its output with extra caution and verify everything.'}
+        </p>
+      </div>
+
+      <div className="rounded-xl border border-amber-500/40 bg-amber-500/[0.07] p-3.5 flex gap-3">
+        <AlertTriangle className="w-5 h-5 text-amber-300 shrink-0 mt-0.5" />
+        <div className="text-[12px] text-slate-300 leading-relaxed">
+          <span className="font-semibold text-amber-300">Legal-work caution.</span> All local models are weaker than the
+          cloud Claude models at clause-level reading, spotting subtle risk, and citing authority — and they hallucinate
+          more. Use local models for privacy-sensitive triage and first drafts; for anything client-facing or
+          high-stakes, verify against sources and have qualified counsel review. Smaller models (≤8B) are unreliable for
+          tool-heavy workflows.
+          <span className="inline-flex items-center gap-1 text-slate-400 mt-1">
+            <Scale className="w-3.5 h-3.5" /> Output is not legal advice.
+          </span>
+        </div>
       </div>
     </div>
   )

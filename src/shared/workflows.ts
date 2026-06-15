@@ -78,7 +78,22 @@ A numbered list, ordered by severity. For each issue give: **the clause**, **why
 ## Recommended Position
 Two or three bullets on what to push on vs. what to concede.
 
-Be specific and cite section numbers. Never invent clauses that aren't in the document. If something important is missing from the contract (e.g. no limitation of liability), call that out explicitly as an issue. When you have produced the review, offer to export it to Word.`
+Be specific and cite section numbers. Cite only sections that actually appear in the document — never invent a clause, section number, or quotation. If an important protection is missing (e.g. no limitation of liability), call that out explicitly as an issue. When you have produced the review, offer to export it to Word.`,
+    localGuidance: `COVERAGE CHECKLIST — work through every item against the document before writing the Issues section. For each, use search_files / the read tools to locate the governing clause, then record a finding (a flagged issue, "acceptable as drafted", or "NOT PRESENT"). Do not skip an item because it looks fine — say so explicitly.
+1. Limitation of liability — the cap amount, and whether it is mutual or one-sided (does a carve-out leave our side uncapped?).
+2. Indemnification — who indemnifies whom, and is our side's indemnity obligation uncapped or one-directional?
+3. Termination — symmetry: can the counterparty terminate for convenience while we can only terminate for breach? Refunds on termination?
+4. Auto-renewal & price escalation — the non-renewal notice window and any automatic fee increases.
+5. Payment terms — net days, late interest/fees, and whether fees are non-refundable.
+6. Data & IP — how our data may be used (especially any AI/ML training), data sharing, and IP ownership.
+7. Assignment / change of control — can we assign in a merger or acquisition? Can the counterparty assign freely?
+8. Unilateral amendment — can the counterparty change the terms without our consent (e.g. by posting an update)?
+9. Governing law & venue — is it a foreign or otherwise inconvenient forum for our side?
+10. MISSING protections — explicitly flag the ABSENCE of any standard protection you would expect: limitation of liability, data processing addendum (DPA), security commitments, SLA, warranty, or (for NDAs) carve-outs from the confidential-information definition.
+
+If you cannot locate a clause for an item, write "not present" — never guess a citation.
+
+SELF-AUDIT: After drafting the Issues list, re-read the checklist and the document once more. Add any material issue you missed (absent protections are easy to overlook) and remove any citation you cannot confirm. Only then produce the final review.`
   },
   {
     id: 'renewal-tracker',
