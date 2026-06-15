@@ -15,6 +15,15 @@ import type {
 export type Route = 'launchpad' | 'workspace' | 'settings' | 'library' | 'collection'
 
 /**
+ * Live IPC subscriptions. Held at module scope so `init()` is idempotent:
+ * React StrictMode (and any double-mount) invokes the init effect twice, and
+ * without this guard each call would register another `agent:event`/`index:event`
+ * listener — causing every streamed delta and activity to be applied twice
+ * (e.g. "TheThe organization organization").
+ */
+let unsubscribers: Array<() => void> = []
+
+/**
  * Whether the active provider is ready to run a workflow. For Anthropic that
  * means an API key is saved (`keyPresent`); for the local provider it means a
  * model has been selected (there is no key to set).
@@ -115,8 +124,13 @@ export const useStore = create<AppState>((set, get) => ({
   searchHits: null,
 
   async init() {
-    window.api.agent.onEvent((e) => get().handleEvent(e))
-    window.api.library.onEvent((e) => get().handleIndexEvent(e))
+    // Tear down any prior subscriptions so a repeated init() (StrictMode
+    // double-mount) never leaves two listeners feeding the same handler.
+    for (const off of unsubscribers) off()
+    unsubscribers = [
+      window.api.agent.onEvent((e) => get().handleEvent(e)),
+      window.api.library.onEvent((e) => get().handleIndexEvent(e))
+    ]
     const [settings, key, matters, collections] = await Promise.all([
       window.api.settings.get(),
       window.api.key.status(),
