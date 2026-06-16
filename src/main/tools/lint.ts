@@ -104,7 +104,9 @@ const BLANK_RES: RegExp[] = [
   /\bTBD\b/g,
   /\bTO BE (?:DETERMINED|COMPLETED|CONFIRMED)\b/gi
 ]
-const SIGNATURE_MARKERS = /\b(IN WITNESS WHEREOF|By:\s|Signature|Authorized Signator|Name:\s|Title:\s)/i
+// Markers of an actual signature block. Deliberately excludes the bare word
+// "signature", which appears in ordinary prose (e.g. "date of the last signature").
+const SIGNATURE_MARKERS = /\b(IN WITNESS WHEREOF|By:\s|Name:\s|Title:\s|Authorized Signator|_{6,}\s*\n\s*(?:Name|Signature))/i
 
 export function checkExecutionReadiness(text: string): LintFinding[] {
   const out: LintFinding[] = []
@@ -131,15 +133,27 @@ export function lintDocument(text: string): LintFinding[] {
   return [...checkDefinedTerms(text), ...checkCrossReferences(text), ...checkExecutionReadiness(text)]
 }
 
+const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 }
+
+function sortedFindings(findings: LintFinding[]): LintFinding[] {
+  return findings.slice().sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
+}
+
 /** Render findings as a compact Markdown report for the model / activity log. */
 export function lintReport(findings: LintFinding[]): string {
   if (findings.length === 0) return 'No defined-term, cross-reference, or execution-readiness issues found.'
-  const order = { high: 0, medium: 1, low: 2 }
-  const lines = findings
-    .slice()
-    .sort((a, b) => order[a.severity] - order[b.severity])
-    .map((f) => `- [${f.severity.toUpperCase()}] ${f.category}: ${f.detail}`)
+  const lines = sortedFindings(findings).map((f) => `- [${f.severity.toUpperCase()}] ${f.category}: ${f.detail}`)
   return `${findings.length} issue(s) found:\n${lines.join('\n')}`
+}
+
+/**
+ * A Markdown section appended to a review deliverable, reporting the deterministic
+ * lint findings. Returns '' when there is nothing to report.
+ */
+export function lintFooter(findings: LintFinding[]): string {
+  if (findings.length === 0) return ''
+  const lines = sortedFindings(findings).map((f) => `- **${f.severity.toUpperCase()}** · ${f.category}: ${f.detail}`)
+  return `\n\n---\n### Automated document checks\n_Deterministic checks (not AI) — defined terms, internal cross-references, and execution readiness:_\n${lines.join('\n')}`
 }
 
 export const lintDocumentTool: ToolDef = {

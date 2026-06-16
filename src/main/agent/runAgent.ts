@@ -7,6 +7,7 @@ import { workflowById } from '@shared/workflows'
 import { getProvider, activeModel } from './provider'
 import { buildSystemPrompt } from './systemPrompts'
 import { verifyCitations, citationFooter } from './verify'
+import { lintDocument, lintFooter } from '../tools/lint'
 import { buildTools } from '../tools/registry'
 import { extractText, INDEXABLE_EXTENSIONS } from '../library/extract'
 import type { ToolContext } from '../tools/types'
@@ -283,14 +284,23 @@ async function runTurn(matterId: string, emit: Emit): Promise<void> {
       try {
         const source = await gatherSourceText(ctx.filesDir)
         if (source) {
-          const footer = citationFooter(verifyCitations(assembled, source))
-          if (footer) {
-            assembled += footer
-            emit({ type: 'text', matterId, messageId, delta: footer })
+          const deliverable = assembled // the model's output, before our appended checks
+          const append = (delta: string): void => {
+            assembled += delta
+            emit({ type: 'text', matterId, messageId, delta })
           }
+          // Run the deterministic linter automatically (don't rely on a weak
+          // model to call lint_document) for workflows that opt into it.
+          if (workflow.tools.includes('lint_document')) {
+            const lf = lintFooter(lintDocument(source))
+            if (lf) append(lf)
+          }
+          // Verify citations in the model's deliverable only — not our footers.
+          const cf = citationFooter(verifyCitations(deliverable, source))
+          if (cf) append(cf)
         }
       } catch {
-        /* verification is best-effort; never block the deliverable */
+        /* checks are best-effort; never block the deliverable */
       }
     }
 
