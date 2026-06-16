@@ -176,7 +176,13 @@ export function createOllamaProvider(baseUrl: string): Provider {
         })
       })
       if (!res.ok || !res.body) {
-        throw new Error(`Ollama error ${res.status}: ${await res.text().catch(() => res.statusText)}`)
+        const body = await res.text().catch(() => res.statusText)
+        if (res.status === 404) {
+          throw new Error(
+            `Local model "${o.model}" is not installed in Ollama. Open Settings → Local model to pick an installed model, or run \`ollama pull ${o.model}\` in a terminal.`
+          )
+        }
+        throw new Error(`Ollama error ${res.status}: ${body}`)
       }
 
       const reader = res.body.getReader()

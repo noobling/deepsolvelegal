@@ -332,7 +332,20 @@ export const useStore = create<AppState>((set, get) => ({
       case 'turn-end':
         break
       case 'error': {
-        set({ toast: `Error: ${e.message}` })
+        // Surface the failure persistently in the deliverable pane if the current
+        // assistant turn produced nothing — a toast alone vanishes and the run
+        // looks silently idle (e.g. the selected local model was uninstalled).
+        const msgs = get().messages
+        const last = msgs[msgs.length - 1]
+        const note = `> ⚠️ **Run failed:** ${e.message}`
+        if (last && last.role === 'assistant' && !last.text.trim()) {
+          set({
+            messages: msgs.map((m) => (m.id === last.id ? { ...m, text: note } : m)),
+            toast: `Error: ${e.message}`
+          })
+        } else {
+          set({ toast: `Error: ${e.message}` })
+        }
         break
       }
       case 'done': {
