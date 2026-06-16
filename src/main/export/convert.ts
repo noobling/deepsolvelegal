@@ -19,15 +19,22 @@ interface MdTable {
   rows: string[][]
 }
 
+// Bold, plus redline markup (<ins>/<del>) so revisions survive into Word as
+// green-underline / red-strikethrough runs.
+const INLINE_RE = /(\*\*[^*]+\*\*|<ins>[\s\S]*?<\/ins>|<del>[\s\S]*?<\/del>)/g
+const REDLINE_INSERT = '1A7F37'
+const REDLINE_DELETE = 'B91C1C'
+
 function parseInlineRuns(text: string): TextRun[] {
-  // Split on **bold** while keeping the rest plain.
-  const parts = text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean)
-  return parts.map((p) => {
-    if (p.startsWith('**') && p.endsWith('**')) {
-      return new TextRun({ text: p.slice(2, -2), bold: true })
-    }
-    return new TextRun(p)
-  })
+  return text
+    .split(INLINE_RE)
+    .filter(Boolean)
+    .map((p) => {
+      if (p.startsWith('**') && p.endsWith('**')) return new TextRun({ text: p.slice(2, -2), bold: true })
+      if (p.startsWith('<ins>')) return new TextRun({ text: p.slice(5, -6), underline: {}, color: REDLINE_INSERT })
+      if (p.startsWith('<del>')) return new TextRun({ text: p.slice(5, -6), strike: true, color: REDLINE_DELETE })
+      return new TextRun(p)
+    })
 }
 
 function splitTableRow(line: string): string[] {
@@ -62,7 +69,12 @@ export function firstMarkdownTable(markdown: string): MdTable | null {
 }
 
 function stripMd(text: string): string {
-  return text.replace(/\*\*/g, '').replace(/^#+\s*/, '').replace(/^>\s?/, '').replace(/^[-*]\s+/, '• ')
+  return text
+    .replace(/<\/?(?:ins|del)>/g, '')
+    .replace(/\*\*/g, '')
+    .replace(/^#+\s*/, '')
+    .replace(/^>\s?/, '')
+    .replace(/^[-*]\s+/, '• ')
 }
 
 // ── DOCX ──
