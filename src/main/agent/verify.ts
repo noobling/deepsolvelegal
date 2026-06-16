@@ -87,6 +87,18 @@ export function verifyCitations(deliverable: string, source: string): CitationCh
   return { cited: [...cited.keys()], unverified }
 }
 
+/**
+ * Section references inside a single document that don't resolve to one of its
+ * own headings — i.e. broken internal cross-references. Unlike verifyCitations,
+ * the valid set is headings ONLY: an inline "see Section 12" must not validate
+ * itself. Returns [] when the heading numbering can't be parsed reliably.
+ */
+export function unresolvedSectionRefs(text: string): string[] {
+  const headings = headingSections(text)
+  if (!parseReliable(headings)) return []
+  return [...citedSections(text)].filter(([, top]) => !headings.has(top)).map(([d]) => d)
+}
+
 /** A short Markdown footer reporting the citation-check result, or '' if there is nothing to say. */
 export function citationFooter(check: CitationCheck): string {
   if (check.cited.length === 0) return ''

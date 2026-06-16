@@ -43,7 +43,7 @@ export const WORKFLOWS: Workflow[] = [
     description: 'Issue-spot an agreement against your playbook and produce a redline-ready summary.',
     icon: 'FileSearch',
     outputType: 'document',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'web_search', 'write_docx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'web_search', 'write_docx', 'lint_document'],
     intakeFields: [
       {
         key: 'files',
@@ -77,6 +77,8 @@ A numbered list, ordered by severity. For each issue give: **the clause**, **why
 
 ## Recommended Position
 Two or three bullets on what to push on vs. what to concede.
+
+Run lint_document on the agreement and fold any defined-term, cross-reference, or execution-readiness issues it returns into your Issues list (these are deterministic, so trust them).
 
 Be specific and cite section numbers. Cite only sections that actually appear in the document — never invent a clause, section number, or quotation. If an important protection is missing (e.g. no limitation of liability), call that out explicitly as an issue. When you have produced the review, offer to export it to Word.`,
     localGuidance: `COVERAGE CHECKLIST — work through every item against the document before writing the Issues section. For each, use search_files / the read tools to locate the governing clause, then record a finding (a flagged issue, "acceptable as drafted", or "NOT PRESENT"). Do not skip an item because it looks fine — say so explicitly.
@@ -326,12 +328,12 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Reconstruct how an agreement changed across amendments into a clean change log.',
     icon: 'GitCompare',
     outputType: 'table',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'list_dir', 'write_xlsx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'list_dir', 'write_xlsx', 'diff_documents'],
     intakeFields: [
       { key: 'files', label: 'Base agreement + amendments', type: 'files', required: true, help: `Attach the base agreement and every amendment (${SUPPORTED_DOCS}).` }
     ],
     runningLabel: 'Tracing the amendment history…',
-    systemPrompt: `You are tracing an amendment history. Read the base agreement and every amendment/addendum. Produce a Markdown table: Amendment (# / date), Sections changed, What changed (before → after, with cites), Effect. Then output a **Current effective terms** section that states, after applying all amendments in order, the operative position on the key provisions (term, pricing, liability cap, termination, renewal). Flag any conflicts or ambiguities between amendments that need human resolution. Offer to export to Excel.`
+    systemPrompt: `You are tracing an amendment history. Read the base agreement and every amendment/addendum. When two versions of the same document are provided, use diff_documents to get an exact redline before describing changes. Produce a Markdown table: Amendment (# / date), Sections changed, What changed (before → after, with cites), Effect. Then output a **Current effective terms** section that states, after applying all amendments in order, the operative position on the key provisions (term, pricing, liability cap, termination, renewal). Flag any conflicts or ambiguities between amendments that need human resolution. Offer to export to Excel.`
   },
 
   // ───────────────────── Litigation (additional) ─────────────────────

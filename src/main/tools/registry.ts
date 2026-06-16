@@ -5,6 +5,8 @@ import { readPdf, readDocx, readXlsx, writeDocx, writeXlsx } from './office'
 import { fetchUrl } from './web'
 import { runCommand } from './shell'
 import { searchLibraryTool } from './library'
+import { lintDocumentTool } from './lint'
+import { diffDocumentsTool } from './diff'
 
 // All locally-executed tools, by name.
 export const LOCAL_TOOLS: Record<string, ToolDef> = {
@@ -19,7 +21,9 @@ export const LOCAL_TOOLS: Record<string, ToolDef> = {
   write_xlsx: writeXlsx,
   fetch_url: fetchUrl,
   run_command: runCommand,
-  search_library: searchLibraryTool
+  search_library: searchLibraryTool,
+  lint_document: lintDocumentTool,
+  diff_documents: diffDocumentsTool
 }
 
 // 'web_search' is a server-side Anthropic tool (executed by the API, not locally).
