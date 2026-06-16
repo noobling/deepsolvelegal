@@ -26,7 +26,8 @@ import { getProvider } from './agent/provider'
 import { createOllamaProvider } from './agent/ollama'
 import { cancel, sendMessage, startThread } from './agent/runAgent'
 import { resolvePermission } from './permissions'
-import { markdownToDocx, markdownToPdf, markdownToXlsx, rowsToXlsx } from './export/convert'
+import { markdownToDocx, markdownToPdf, markdownToXlsx, markdownToTrackedDocx, rowsToXlsx } from './export/convert'
+import { getDocument } from './storage/store'
 import {
   deleteCollection,
   getCollectionDetail,
@@ -105,6 +106,12 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('matters:list', () => listMatters())
   ipcMain.handle('matters:get', (_e, id: string) => getMatter(id))
   ipcMain.handle('matters:delete', (_e, id: string) => deleteMatter(id))
+  // The matter's document rendered as a tracked-changes .docx (base64) for SuperDoc.
+  ipcMain.handle('matters:documentDocx', async (_e, id: string): Promise<string> => {
+    const text = await getDocument(id)
+    if (!text.trim()) return ''
+    return (await markdownToTrackedDocx(text)).toString('base64')
+  })
 
   // Agent
   ipcMain.handle('agent:start', (_e, input: StartThreadInput) => startThread(input, emit))

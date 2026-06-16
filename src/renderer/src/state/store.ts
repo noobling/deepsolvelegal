@@ -12,7 +12,7 @@ import type {
   ToolActivity
 } from '@shared/types'
 
-export type Route = 'launchpad' | 'workspace' | 'settings' | 'library' | 'collection'
+export type Route = 'launchpad' | 'workspace' | 'settings' | 'library' | 'collection' | 'superdoc-spike'
 
 /**
  * Live IPC subscriptions. Held at module scope so `init()` is idempotent:
@@ -89,6 +89,8 @@ interface AppState {
   messages: ThreadMessage[]
   /** The stored/edited document for the open matter (empty until the first turn). */
   documentText: string
+  /** Base64 .docx of the document with tracked changes, for the SuperDoc editor. */
+  documentDocx: string
   activities: ToolActivity[]
   running: boolean
   /** Matter ids with an in-flight agent run (tracked across navigation). */
@@ -143,6 +145,7 @@ export const useStore = create<AppState>((set, get) => ({
   currentTitle: '',
   messages: [],
   documentText: '',
+  documentDocx: '',
   activities: [],
   running: false,
   runningMatters: [],
@@ -199,6 +202,7 @@ export const useStore = create<AppState>((set, get) => ({
       currentMatterId: matterId,
       messages: [],
       documentText: '',
+      documentDocx: '',
       activities: [],
       running: true,
       runningMatters: [...get().runningMatters, matterId],
@@ -221,10 +225,17 @@ export const useStore = create<AppState>((set, get) => ({
       currentTitle: detail.title,
       messages: detail.messages,
       documentText: detail.document ?? '',
+      documentDocx: '',
       activities: detail.activities,
       running: get().runningMatters.includes(id),
       route: 'workspace'
     })
+    // Render the stored document as a tracked-changes .docx for the SuperDoc pane.
+    if (detail.document?.trim()) {
+      void window.api.matters.documentDocx(id).then((docx) => {
+        if (docx && get().currentMatterId === id) set({ documentDocx: docx })
+      })
+    }
   },
 
   async deleteMatter(id) {
@@ -364,7 +375,7 @@ export const useStore = create<AppState>((set, get) => ({
         break
       }
       case 'document':
-        set({ documentText: e.text })
+        set(e.docx ? { documentText: e.text, documentDocx: e.docx } : { documentText: e.text })
         break
       case 'turn-end':
         break

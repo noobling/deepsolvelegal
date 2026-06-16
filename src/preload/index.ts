@@ -29,7 +29,8 @@ const api: Api = {
   matters: {
     list: () => ipcRenderer.invoke('matters:list'),
     get: (id: string) => ipcRenderer.invoke('matters:get', id),
-    delete: (id: string) => ipcRenderer.invoke('matters:delete', id)
+    delete: (id: string) => ipcRenderer.invoke('matters:delete', id),
+    documentDocx: (id: string) => ipcRenderer.invoke('matters:documentDocx', id)
   },
   agent: {
     start: (input: StartThreadInput) => ipcRenderer.invoke('agent:start', input),

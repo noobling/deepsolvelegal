@@ -28,6 +28,9 @@ export default function Sidebar(): JSX.Element {
         <NavItem active={route === 'settings'} onClick={() => setRoute('settings')} icon={<SettingsIcon className="w-4 h-4" />}>
           Settings
         </NavItem>
+        <NavItem active={route === 'superdoc-spike'} onClick={() => setRoute('superdoc-spike')} icon={<FileText className="w-4 h-4" />}>
+          SuperDoc spike
+        </NavItem>
       </nav>
 
       <div className="px-4 pt-3 pb-1 text-[11px] uppercase tracking-wider text-ink-600">Recent matters</div>

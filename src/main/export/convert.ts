@@ -4,11 +4,14 @@ import {
   Paragraph,
   HeadingLevel,
   TextRun,
+  InsertedTextRun,
+  DeletedTextRun,
   Table,
   TableRow,
   TableCell,
   WidthType
 } from 'docx'
+import type { ParagraphChild } from 'docx'
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import ExcelJS from 'exceljs'
 
@@ -35,6 +38,53 @@ function parseInlineRuns(text: string): TextRun[] {
       if (p.startsWith('<del>')) return new TextRun({ text: p.slice(5, -6), strike: true, color: REDLINE_DELETE })
       return new TextRun(p)
     })
+}
+
+const REDLINE_AUTHOR = 'DeepSolve AI'
+let revisionId = 1
+
+/** Like parseInlineRuns, but emit <ins>/<del> as NATIVE Word tracked changes (w:ins/w:del). */
+function parseTrackedRuns(text: string): ParagraphChild[] {
+  const date = new Date().toISOString()
+  return text
+    .split(INLINE_RE)
+    .filter(Boolean)
+    .map((p): ParagraphChild => {
+      if (p.startsWith('**') && p.endsWith('**')) return new TextRun({ text: p.slice(2, -2), bold: true })
+      if (p.startsWith('<ins>'))
+        return new InsertedTextRun({ text: p.slice(5, -6), id: revisionId++, author: REDLINE_AUTHOR, date })
+      if (p.startsWith('<del>'))
+        return new DeletedTextRun({ text: p.slice(5, -6), id: revisionId++, author: REDLINE_AUTHOR, date })
+      return new TextRun(p)
+    })
+}
+
+/**
+ * Render Markdown (with <ins>/<del> redlines) to a .docx whose changes are real
+ * Word tracked changes — so SuperDoc and Word show them as accept/reject
+ * suggestions attributed to the AI. Used to feed the embedded editor.
+ */
+export async function markdownToTrackedDocx(markdown: string, title?: string): Promise<Buffer> {
+  const children: Paragraph[] = []
+  if (title) children.push(new Paragraph({ text: title, heading: HeadingLevel.TITLE }))
+  for (const raw of markdown.split('\n')) {
+    const line = raw.trim()
+    if (!line) {
+      children.push(new Paragraph(''))
+    } else if (line.startsWith('### ')) {
+      children.push(new Paragraph({ text: stripMd(line), heading: HeadingLevel.HEADING_3 }))
+    } else if (line.startsWith('## ')) {
+      children.push(new Paragraph({ text: stripMd(line), heading: HeadingLevel.HEADING_2 }))
+    } else if (line.startsWith('# ')) {
+      children.push(new Paragraph({ text: stripMd(line), heading: HeadingLevel.HEADING_1 }))
+    } else if (/^[-*]\s+/.test(line)) {
+      children.push(new Paragraph({ children: parseTrackedRuns(line.replace(/^[-*]\s+/, '')), bullet: { level: 0 } }))
+    } else {
+      children.push(new Paragraph({ children: parseTrackedRuns(line) }))
+    }
+  }
+  const doc = new Document({ features: { trackRevisions: true }, sections: [{ children }] })
+  return Buffer.from(await Packer.toBuffer(doc))
 }
 
 function splitTableRow(line: string): string[] {

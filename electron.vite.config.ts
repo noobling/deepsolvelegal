@@ -33,6 +33,12 @@ export default defineConfig({
         '@shared': resolve(__dirname, 'src/shared')
       }
     },
+    // SuperDoc ships fonts as `new URL(..., import.meta.url)` assets; esbuild's
+    // dep pre-bundling breaks that resolution (fonts 404 → invisible text), so
+    // exclude SuperDoc packages from optimizeDeps.
+    optimizeDeps: {
+      exclude: ['superdoc', '@superdoc-dev/react', '@superdoc-dev/fonts']
+    },
     plugins: [react()],
     build: {
       rollupOptions: {

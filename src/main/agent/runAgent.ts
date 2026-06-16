@@ -8,6 +8,7 @@ import { getProvider, activeModel } from './provider'
 import { buildSystemPrompt } from './systemPrompts'
 import { verifyCitations, citationFooter } from './verify'
 import { lintDocument, lintFooter } from '../tools/lint'
+import { markdownToTrackedDocx } from '../export/convert'
 import { buildTools } from '../tools/registry'
 import { extractText, INDEXABLE_EXTENSIONS } from '../library/extract'
 import type { ToolContext } from '../tools/types'
@@ -191,9 +192,26 @@ async function runTurn(matterId: string, emit: Emit): Promise<void> {
     const system = buildSystemPrompt(workflow, settings, '(see the conversation)')
 
     // The work-product document, edited in place by apply_redline this turn.
-    // Re-sync it to the pane now that the renderer has this matter selected.
     let currentDocument = await getDocument(matterId)
-    if (currentDocument) emit({ type: 'document', matterId, text: currentDocument })
+
+    // Emit the document plus a tracked-changes .docx (base64) so the embedded
+    // SuperDoc editor can render the AI's redlines as real Word suggestions.
+    const emitDocument = async (text: string): Promise<void> => {
+      let docx: string | undefined
+      try {
+        docx = (await markdownToTrackedDocx(text)).toString('base64')
+      } catch {
+        /* fall back to text only */
+      }
+      emit({ type: 'document', matterId, text, docx })
+    }
+
+    // Push the initial document to the pane on the first turn only. Re-emitting
+    // on every follow-up would remount SuperDoc twice per redline (here + in
+    // apply_redline), blanking the editor. (openMatter loads it via IPC.)
+    const priorMsgs = (await getMatter(matterId))?.messages ?? []
+    const isInitialTurn = !priorMsgs.some((m) => m.role === 'assistant' && m.text.trim())
+    if (currentDocument && isInitialTurn) await emitDocument(currentDocument)
 
     const ctx: ToolContext = {
       matterId,
@@ -211,7 +229,7 @@ async function runTurn(matterId: string, emit: Emit): Promise<void> {
       setDocument: async (text) => {
         currentDocument = text
         await setDocument(matterId, text)
-        emit({ type: 'document', matterId, text })
+        await emitDocument(text)
       }
     }
 

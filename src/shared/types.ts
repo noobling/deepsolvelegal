@@ -239,7 +239,7 @@ export type AgentEvent =
       detail: string
     }
   | { type: 'turn-end'; matterId: string; messageId: string }
-  | { type: 'document'; matterId: string; text: string }
+  | { type: 'document'; matterId: string; text: string; docx?: string }
   | { type: 'error'; matterId: string; message: string }
   | { type: 'done'; matterId: string }
 
@@ -349,6 +349,7 @@ export interface Api {
     list: () => Promise<Matter[]>
     get: (id: string) => Promise<MatterDetail | null>
     delete: (id: string) => Promise<void>
+    documentDocx: (id: string) => Promise<string>
   }
   agent: {
     start: (input: StartThreadInput) => Promise<{ matterId: string }>

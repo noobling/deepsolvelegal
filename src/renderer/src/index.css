@@ -20,19 +20,45 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Thin, unobtrusive scrollbars */
+/* Thin, unobtrusive scrollbars. Dark UI by default; the cream "paper" document
+   panes get a warm-grey thumb so it doesn't clash with the light background. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2c3650 transparent;
+}
 *::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
 *::-webkit-scrollbar-thumb {
-  background: #26304b;
-  border-radius: 6px;
+  background: #2c3650;
+  border-radius: 8px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: #36425f;
+  background: #3c496a;
+  background-clip: content-box;
+}
+
+/* Cream "paper" document panes (deliverable / SuperDoc) — light-friendly thumb. */
+.bg-paper {
+  scrollbar-color: #d4cdb9 transparent;
+}
+.bg-paper::-webkit-scrollbar-thumb,
+.bg-paper ::-webkit-scrollbar-thumb {
+  background: #d4cdb9;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.bg-paper::-webkit-scrollbar-thumb:hover,
+.bg-paper ::-webkit-scrollbar-thumb:hover {
+  background: #c0b8a0;
   background-clip: content-box;
 }
 
@@ -42,6 +68,15 @@ body {
   font-family: 'Source Serif 4', Georgia, serif;
   line-height: 1.7;
 }
+/* SuperDoc spike: the editor inherits the app's light body text color on its
+   white page, making text invisible. Force dark text inside the editor. */
+.superdoc,
+.super-editor,
+[class*='superdoc'],
+[class*='super-editor'] {
+  color: #1a1f2b;
+}
+
 /* Compact Markdown for assistant chat bubbles in the side panel. */
 .prose-chat {
   line-height: 1.5;

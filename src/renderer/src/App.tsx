@@ -6,6 +6,7 @@ import Workspace from './pages/Workspace'
 import Settings from './pages/Settings'
 import Library from './pages/Library'
 import Collection from './pages/Collection'
+import SuperDocSpike from './pages/SuperDocSpike'
 import IntakePanel from './components/IntakePanel'
 import PermissionModal from './components/PermissionModal'
 import Toast from './components/Toast'
@@ -28,12 +29,13 @@ export default function App(): JSX.Element {
   return (
     <div className="h-full flex bg-ink-950 text-slate-100">
       <Sidebar />
-      <main className="flex-1 min-w-0 flex flex-col">
+      <main className="flex-1 min-w-0 min-h-0 flex flex-col">
         {route === 'launchpad' && <Launchpad />}
         {route === 'workspace' && <Workspace />}
         {route === 'settings' && <Settings />}
         {route === 'library' && <Library />}
         {route === 'collection' && <Collection />}
+        {route === 'superdoc-spike' && <SuperDocSpike />}
       </main>
       {intakeWorkflowId && <IntakePanel workflowId={intakeWorkflowId} />}
       <PermissionModal />

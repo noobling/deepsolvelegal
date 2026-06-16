@@ -2,12 +2,14 @@ import { useMemo, useState } from 'react'
 import { useStore, deriveDocAndChat } from '../state/store'
 import { workflowById } from '@shared/workflows'
 import Deliverable from '../components/Deliverable'
+import SuperDocPane from '../components/SuperDocPane'
 import ActivityRail from '../components/ActivityRail'
 import DataNotice from '../components/DataNotice'
 import { ArrowLeft, FileDown, Loader2, FileText, FileSpreadsheet, FileType } from 'lucide-react'
 
 export default function Workspace(): JSX.Element {
-  const { messages, documentText: storedDocument, running, currentMatterId, matters, setRoute, setToast } = useStore()
+  const { messages, documentText: storedDocument, documentDocx, running, currentMatterId, matters, setRoute, setToast } =
+    useStore()
   const [exporting, setExporting] = useState('')
 
   const matter = matters.find((m) => m.id === currentMatterId)
@@ -29,9 +31,11 @@ export default function Workspace(): JSX.Element {
   }
 
   const isTable = workflow?.outputType === 'table'
+  // Redline workflows edit a contract in place → show the SuperDoc Word editor.
+  const isRedline = !!workflow?.tools.includes('apply_redline')
 
   return (
-    <div className="flex-1 min-w-0 flex flex-col">
+    <div className="flex-1 min-w-0 min-h-0 flex flex-col">
       <header className="h-14 shrink-0 border-b border-ink-700/60 bg-ink-900/60 flex items-center gap-3 px-5">
         <button onClick={() => setRoute('launchpad')} className="text-ink-600 hover:text-slate-200" title="Back">
           <ArrowLeft className="w-5 h-5" />
@@ -58,11 +62,11 @@ export default function Workspace(): JSX.Element {
 
       <div className="flex-1 min-h-0 flex">
         <div className="flex-1 min-w-0">
-          <Deliverable
-            text={documentText}
-            running={running}
-            emptyHint={workflow?.runningLabel ?? 'Working…'}
-          />
+          {isRedline ? (
+            <SuperDocPane docxBase64={documentDocx} running={running} />
+          ) : (
+            <Deliverable text={documentText} running={running} emptyHint={workflow?.runningLabel ?? 'Working…'} />
+          )}
         </div>
         <ActivityRail />
       </div>

@@ -30,14 +30,14 @@ export default function ActivityRail(): JSX.Element {
   }
 
   return (
-    <aside className="w-[360px] shrink-0 border-l border-ink-700/60 bg-ink-900/40 flex flex-col">
-      <div className="px-4 py-3 border-b border-ink-700/60 flex items-center gap-2">
+    <aside className="w-[360px] shrink-0 border-l border-ink-700/60 bg-ink-900/40 flex flex-col min-h-0">
+      <div className="shrink-0 px-4 py-3 border-b border-ink-700/60 flex items-center gap-2">
         <Sparkles className="w-4 h-4 text-accent" />
         <span className="text-sm font-medium text-slate-200">Activity</span>
         {running && <span className="ml-auto text-[11px] text-accent animate-pulse">working…</span>}
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+      <div ref={scrollRef} className="flex-1 min-h-0 overflow-y-auto px-3 py-3 space-y-2">
         {timeline.length === 0 && !running && (
           <div className="text-[12.5px] text-ink-600 px-1 py-2">
             Tool activity and your follow-up messages will appear here.
@@ -61,7 +61,7 @@ export default function ActivityRail(): JSX.Element {
         )}
       </div>
 
-      <div className="p-3 border-t border-ink-700/60">
+      <div className="shrink-0 p-3 border-t border-ink-700/60">
         <div className="flex items-end gap-2">
           <textarea
             rows={2}
