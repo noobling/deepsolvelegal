@@ -147,8 +147,11 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     try {
       const matter = await getMatter(input.matterId)
       if (!matter) return { ok: false, error: 'Matter not found.' }
+      // Prefer the stored document (the work product, edited in place); fall back
+      // to the referenced message for table/other deliverables.
       const msg = matter.messages.find((m) => m.id === input.messageId)
-      if (!msg) return { ok: false, error: 'Message not found.' }
+      const content = matter.document?.trim() ? matter.document : msg?.text
+      if (!content) return { ok: false, error: 'Nothing to export yet.' }
       const settings = await getSettings()
       const dir = settings.matterRoot
       await fs.mkdir(dir, { recursive: true })
@@ -156,13 +159,13 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       let buf: Buffer
       let ext: string
       if (input.format === 'docx') {
-        buf = await markdownToDocx(msg.text, matter.title)
+        buf = await markdownToDocx(content, matter.title)
         ext = 'docx'
       } else if (input.format === 'pdf') {
-        buf = await markdownToPdf(msg.text, matter.title)
+        buf = await markdownToPdf(content, matter.title)
         ext = 'pdf'
       } else {
-        buf = await markdownToXlsx(msg.text, matter.title.slice(0, 28))
+        buf = await markdownToXlsx(content, matter.title.slice(0, 28))
         ext = 'xlsx'
       }
       const outPath = path.join(dir, `${base}.${ext}`)

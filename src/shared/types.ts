@@ -219,6 +219,8 @@ export interface Matter {
 export interface MatterDetail extends Matter {
   messages: ThreadMessage[]
   activities: ToolActivity[]
+  /** The work product shown in the document pane, edited in place by apply_redline. */
+  document?: string
 }
 
 // ---- Agent streaming events (main -> renderer) ----
@@ -237,6 +239,7 @@ export type AgentEvent =
       detail: string
     }
   | { type: 'turn-end'; matterId: string; messageId: string }
+  | { type: 'document'; matterId: string; text: string }
   | { type: 'error'; matterId: string; message: string }
   | { type: 'done'; matterId: string }
 

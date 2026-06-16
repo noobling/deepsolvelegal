@@ -7,19 +7,23 @@ import DataNotice from '../components/DataNotice'
 import { ArrowLeft, FileDown, Loader2, FileText, FileSpreadsheet, FileType } from 'lucide-react'
 
 export default function Workspace(): JSX.Element {
-  const { messages, running, currentMatterId, matters, setRoute, setToast } = useStore()
+  const { messages, documentText: storedDocument, running, currentMatterId, matters, setRoute, setToast } = useStore()
   const [exporting, setExporting] = useState('')
 
   const matter = matters.find((m) => m.id === currentMatterId)
   const workflow = matter ? workflowById(matter.workflowId) : undefined
 
-  // The document pane shows the work product; chat replies stay in the side panel.
-  const { documentText, documentId } = useMemo(() => deriveDocAndChat(messages), [messages])
+  // The document pane shows the work product (edited in place by apply_redline);
+  // chat replies stay in the side panel.
+  const { documentText, documentId } = useMemo(
+    () => deriveDocAndChat(messages, storedDocument),
+    [messages, storedDocument]
+  )
 
   const doExport = async (format: 'docx' | 'pdf' | 'xlsx'): Promise<void> => {
-    if (!currentMatterId || !documentId) return
+    if (!currentMatterId || !documentText) return
     setExporting(format)
-    const res = await window.api.export({ matterId: currentMatterId, messageId: documentId, format })
+    const res = await window.api.export({ matterId: currentMatterId, messageId: documentId ?? '', format })
     setExporting('')
     setToast(res.ok ? `Exported to ${res.path}` : `Export failed: ${res.error}`)
   }

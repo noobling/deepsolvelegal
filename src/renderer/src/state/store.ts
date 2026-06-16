@@ -33,34 +33,33 @@ export function providerReady(settings: Settings | null, keyPresent: boolean): b
   return settings.provider === 'ollama' ? !!settings.ollamaModel : keyPresent
 }
 
-const REDLINE_RE = /<(ins|del)>/i
-
 /**
- * Split the thread into the persistent document (the work product shown in the
- * main pane) and the chat conversation (shown in the side panel). An assistant
- * turn belongs to the document if it is the first one (the original draft) or it
- * contains redline markup (a revision); every other turn is a chat reply. This
- * keeps follow-up answers from overwriting the document.
+ * Split the thread into the document (the work product shown in the main pane)
+ * and the chat conversation (the side panel).
+ *
+ * When `documentOverride` is set (redline workflows), the document is the
+ * uploaded contract — edited in place by apply_redline — and every message,
+ * including the review, belongs to the chat. Otherwise the first assistant turn
+ * IS the deliverable shown in the pane, and the rest is chat.
  */
-export function deriveDocAndChat(messages: ThreadMessage[]): {
+export function deriveDocAndChat(
+  messages: ThreadMessage[],
+  documentOverride = ''
+): {
   documentText: string
   documentId: string | null
   chat: ThreadMessage[]
 } {
   const firstAssistantIdx = messages.findIndex((m) => m.role === 'assistant')
-  let documentText = ''
-  let documentId: string | null = null
-  const chat: ThreadMessage[] = []
-  messages.forEach((m, i) => {
-    const isDocument = m.role === 'assistant' && (i === firstAssistantIdx || REDLINE_RE.test(m.text))
-    if (isDocument) {
-      documentText = m.text
-      documentId = m.id
-    } else {
-      chat.push(m)
-    }
-  })
-  return { documentText, documentId, chat }
+  const firstAssistant = firstAssistantIdx >= 0 ? messages[firstAssistantIdx] : null
+  if (documentOverride) {
+    return { documentText: documentOverride, documentId: firstAssistant?.id ?? null, chat: messages }
+  }
+  return {
+    documentText: firstAssistant?.text ?? '',
+    documentId: firstAssistant?.id ?? null,
+    chat: messages.filter((_, i) => i !== firstAssistantIdx)
+  }
 }
 
 interface IndexProgress {
@@ -88,6 +87,8 @@ interface AppState {
   currentMatterId: string | null
   currentTitle: string
   messages: ThreadMessage[]
+  /** The stored/edited document for the open matter (empty until the first turn). */
+  documentText: string
   activities: ToolActivity[]
   running: boolean
   /** Matter ids with an in-flight agent run (tracked across navigation). */
@@ -141,6 +142,7 @@ export const useStore = create<AppState>((set, get) => ({
   currentMatterId: null,
   currentTitle: '',
   messages: [],
+  documentText: '',
   activities: [],
   running: false,
   runningMatters: [],
@@ -196,6 +198,7 @@ export const useStore = create<AppState>((set, get) => ({
       intakeWorkflowId: null,
       currentMatterId: matterId,
       messages: [],
+      documentText: '',
       activities: [],
       running: true,
       runningMatters: [...get().runningMatters, matterId],
@@ -217,6 +220,7 @@ export const useStore = create<AppState>((set, get) => ({
       currentMatterId: id,
       currentTitle: detail.title,
       messages: detail.messages,
+      documentText: detail.document ?? '',
       activities: detail.activities,
       running: get().runningMatters.includes(id),
       route: 'workspace'
@@ -359,6 +363,9 @@ export const useStore = create<AppState>((set, get) => ({
         })
         break
       }
+      case 'document':
+        set({ documentText: e.text })
+        break
       case 'turn-end':
         break
       case 'error': {

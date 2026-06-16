@@ -43,7 +43,7 @@ export const WORKFLOWS: Workflow[] = [
     description: 'Issue-spot an agreement against your playbook and produce a redline-ready summary.',
     icon: 'FileSearch',
     outputType: 'document',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'web_search', 'write_docx', 'lint_document'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'web_search', 'write_docx', 'lint_document', 'apply_redline'],
     intakeFields: [
       {
         key: 'files',

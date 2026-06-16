@@ -63,6 +63,8 @@ interface MatterMeta extends Matter {}
 interface ThreadFile {
   messages: ThreadMessage[]
   activities: ToolActivity[]
+  /** The work product shown in the document pane (edited in place by apply_redline). */
+  document?: string
 }
 
 function matterPath(id: string): string {
@@ -147,6 +149,16 @@ export async function updateMessageText(id: string, messageId: string, text: str
     m.text = text
     await saveThread(id, thread)
   }
+}
+
+export async function getDocument(id: string): Promise<string> {
+  return (await loadThread(id)).document ?? ''
+}
+
+export async function setDocument(id: string, text: string): Promise<void> {
+  const thread = await loadThread(id)
+  thread.document = text
+  await saveThread(id, thread)
 }
 
 export async function appendActivity(id: string, activity: ToolActivity): Promise<void> {

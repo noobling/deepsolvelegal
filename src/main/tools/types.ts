@@ -7,6 +7,10 @@ export interface ToolContext {
   matterRoot: string
   /** Prompt the user; resolves true if allowed. */
   requestPermission: (title: string, detail: string) => Promise<boolean>
+  /** Current work-product document shown in the document pane. */
+  getDocument: () => string
+  /** Replace the document; persists and updates the document pane. */
+  setDocument: (text: string) => Promise<void>
 }
 
 export interface ToolRunResult {

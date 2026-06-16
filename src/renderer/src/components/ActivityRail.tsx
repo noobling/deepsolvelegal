@@ -7,13 +7,13 @@ import remarkGfm from 'remark-gfm'
 import { Send, Square, Sparkles } from 'lucide-react'
 
 export default function ActivityRail(): JSX.Element {
-  const { messages, activities, running, sendFollow, cancelRun } = useStore()
+  const { messages, documentText, activities, running, sendFollow, cancelRun } = useStore()
   const [text, setText] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // The chat panel shows the conversation (user messages + assistant replies);
-  // the document itself lives in the main pane (see deriveDocAndChat).
-  const { chat } = deriveDocAndChat(messages)
+  // The chat panel shows the conversation (review, questions, replies); the
+  // document itself lives in the main pane (see deriveDocAndChat).
+  const { chat } = deriveDocAndChat(messages, documentText)
   const timeline = [
     ...chat.map((m) => ({ kind: 'msg' as const, t: m.createdAt, m })),
     ...activities.map((a) => ({ kind: 'tool' as const, t: a.startedAt, a }))

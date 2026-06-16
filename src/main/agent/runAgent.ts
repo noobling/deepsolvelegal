@@ -18,10 +18,12 @@ import {
   createMatter,
   finishActivity,
   getApiMessages,
+  getDocument,
   getMatter,
   getSettings,
   matterFilesDir,
   setApiMessages,
+  setDocument,
   updateMessageText
 } from '../storage/store'
 
@@ -116,6 +118,17 @@ export async function startThread(input: StartThreadInput, emit: Emit): Promise<
   })
 
   const copied = await importFiles(matterId, input.files)
+
+  // For redline-capable workflows, the uploaded document itself is the work
+  // product shown in the document pane — apply_redline edits it in place, and
+  // the model's review/answers go to the chat.
+  if (workflow.tools.includes('apply_redline')) {
+    const source = await gatherSourceText(matterFilesDir(matterId))
+    // The document pane is synced from runTurn (after the renderer has selected
+    // this matter), so we only persist it here.
+    if (source) await setDocument(matterId, source)
+  }
+
   const intakeSummary = summarizeIntake(workflow.intakeFields, input.intake, copied)
   const userText = `Please complete this task.\n\n${intakeSummary}`
 
@@ -177,6 +190,11 @@ async function runTurn(matterId: string, emit: Emit): Promise<void> {
     const { tools, local, serverTools } = buildTools(workflow.tools)
     const system = buildSystemPrompt(workflow, settings, '(see the conversation)')
 
+    // The work-product document, edited in place by apply_redline this turn.
+    // Re-sync it to the pane now that the renderer has this matter selected.
+    let currentDocument = await getDocument(matterId)
+    if (currentDocument) emit({ type: 'document', matterId, text: currentDocument })
+
     const ctx: ToolContext = {
       matterId,
       filesDir: matterFilesDir(matterId),
@@ -188,7 +206,13 @@ async function runTurn(matterId: string, emit: Emit): Promise<void> {
           title,
           detail: detailText,
           emit
-        })
+        }),
+      getDocument: () => currentDocument,
+      setDocument: async (text) => {
+        currentDocument = text
+        await setDocument(matterId, text)
+        emit({ type: 'document', matterId, text })
+      }
     }
 
     const apiMessages = (await getApiMessages(matterId)) as Anthropic.MessageParam[]
@@ -197,6 +221,7 @@ async function runTurn(matterId: string, emit: Emit): Promise<void> {
     await appendMessage(matterId, { id: messageId, role: 'assistant', text: '', createdAt: Date.now() })
 
     let assembled = ''
+    let redlineFailures = 0 // guards against a model looping on apply_redline retries
 
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
       if (run.cancelled) break
@@ -258,10 +283,20 @@ async function runTurn(matterId: string, emit: Emit): Promise<void> {
           const result = await def.run(tu.input as Record<string, unknown>, ctx)
           await finishActivity(matterId, activityId, !result.isError, result.summary)
           emit({ type: 'tool-end', matterId, toolId: tu.id, ok: !result.isError, summary: result.summary })
+          let content = result.content
+          if (tu.name === 'apply_redline' && result.isError) {
+            redlineFailures += 1
+            // Stop a weak model from looping on retries: after two misses, tell it
+            // firmly to give up and explain the change in chat instead.
+            if (redlineFailures >= 2) {
+              content =
+                'Stop calling apply_redline — the exact text could not be matched. Do NOT try again. Reply to the user in chat naming the clause you intended to change and the proposed new wording.'
+            }
+          }
           toolResults.push({
             type: 'tool_result',
             tool_use_id: tu.id,
-            content: result.content,
+            content,
             is_error: result.isError
           })
         } catch (e) {
@@ -282,29 +317,24 @@ async function runTurn(matterId: string, emit: Emit): Promise<void> {
     // (a common local-model failure) without trusting the model to self-check.
     if (!run.cancelled && assembled.trim()) {
       try {
-        const source = await gatherSourceText(ctx.filesDir)
-        if (source) {
-          // Footers belong on the document, not on chat replies. A turn is part
-          // of the document if it's the first assistant turn (the original draft)
-          // or it contains redlines (a revision) — matching deriveDocAndChat.
-          const prior = (await getMatter(matterId))?.messages ?? []
-          const isFirstAssistant = !prior.some(
-            (m) => m.role === 'assistant' && m.id !== messageId && m.text.trim()
-          )
-          const isDocumentTurn = isFirstAssistant || /<(ins|del)>/i.test(assembled)
-          if (isDocumentTurn) {
+        // Annotate the first review turn with the deterministic checks. (The
+        // document itself is the uploaded contract, edited via apply_redline.)
+        const prior = (await getMatter(matterId))?.messages ?? []
+        const isFirstAssistant = !prior.some(
+          (m) => m.role === 'assistant' && m.id !== messageId && m.text.trim()
+        )
+        if (isFirstAssistant) {
+          const source = await gatherSourceText(ctx.filesDir)
+          if (source) {
             const deliverable = assembled // the model's output, before appended checks
             const append = (delta: string): void => {
               assembled += delta
               emit({ type: 'text', matterId, messageId, delta })
             }
-            // Lint the source once on the original draft (redundant on revisions);
-            // don't rely on a weak model to call lint_document itself.
-            if (isFirstAssistant && workflow.tools.includes('lint_document')) {
+            if (workflow.tools.includes('lint_document')) {
               const lf = lintFooter(lintDocument(source))
               if (lf) append(lf)
             }
-            // Verify citations in the model's deliverable only — not our footers.
             const cf = citationFooter(verifyCitations(deliverable, source))
             if (cf) append(cf)
           }
