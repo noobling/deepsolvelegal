@@ -30,6 +30,10 @@ export default function SyncfusionPane({
     if (!editor || !md.trim()) return
     editor.open(markdownToSfdt(md))
     editor.enableTrackChanges = true // user edits are tracked too
+    // Keep Syncfusion's own review pane closed: the chat (Activity rail) is the
+    // conversation surface and redlines already show inline, so the pane would
+    // just crowd the chat off-screen. Defer past open()'s async layout.
+    setTimeout(() => editor.commentReviewPane?.showHidePane(false, 'Changes'), 0)
   }
 
   // Reload when the AI edits the document.
@@ -57,6 +61,7 @@ export default function SyncfusionPane({
         ref={ref}
         height="100%"
         enableToolbar
+        showPropertiesPane={false}
         serviceUrl=""
         created={() => open(documentText)}
       >
