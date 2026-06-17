@@ -5,7 +5,7 @@ import type { ToolDef } from './types'
 import { resolvePath, str } from './types'
 import { markdownToDocx, markdownToXlsx } from '../export/convert'
 import { extractPdfText, extractDocxText, extractXlsxText } from '../library/extract'
-import { extractDocxHighlights } from '../library/highlights'
+import { extractHighlights as extractDocHighlights } from '../library/highlights'
 
 export const readPdf: ToolDef = {
   name: 'read_pdf',
@@ -44,17 +44,18 @@ export const readDocx: ToolDef = {
 export const extractHighlights: ToolDef = {
   name: 'extract_highlights',
   description:
-    "Extract the passages a reviewer marked with Microsoft Word's highlighter (or run shading) from a .docx file. Returns each highlighted snippet, its colour, and the surrounding clause for context. Use this to pull out the exact text a senior reviewer flagged.",
+    "Extract the passages a reviewer marked with the highlighter — Microsoft Word's highlighter/shading in a .docx, or highlight annotations in a .pdf. Returns each highlighted snippet, its colour, and the surrounding clause for context. Use this to pull out the exact text a senior reviewer flagged.",
   needsPermission: false,
   inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
   async run(args, ctx) {
     const file = resolvePath(ctx, str(args, 'path'))
     if (!existsSync(file)) return { summary: `Not found: ${file}`, content: 'File does not exist.', isError: true }
-    if (path.extname(file).toLowerCase() !== '.docx') {
-      return { summary: 'Not a .docx', content: 'Highlights can only be extracted from Word (.docx) files.', isError: true }
+    const ext = path.extname(file).toLowerCase()
+    if (ext !== '.docx' && ext !== '.pdf') {
+      return { summary: 'Unsupported file', content: 'Highlights can be extracted from .docx or .pdf files only.', isError: true }
     }
     try {
-      const hits = await extractDocxHighlights(file)
+      const hits = await extractDocHighlights(file)
       if (hits.length === 0) {
         return { summary: `No highlights in ${path.basename(file)}`, content: 'No highlighted text found in this document.' }
       }

@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs'
+import path from 'path'
 import JSZip from 'jszip'
 import { DOMParser } from '@xmldom/xmldom'
 
@@ -108,4 +109,127 @@ export async function extractDocxHighlights(filePath: string): Promise<Highlight
   }
 
   return passages
+}
+
+// ───────────────────────── PDF ─────────────────────────
+
+interface Box {
+  x0: number
+  x1: number
+  y0: number
+  y1: number
+}
+
+// Word-highlighter palette → name, matched by nearest RGB within a threshold.
+const PDF_COLORS: Array<{ name: string; rgb: [number, number, number] }> = [
+  { name: 'yellow', rgb: [255, 255, 0] },
+  { name: 'green', rgb: [0, 255, 0] },
+  { name: 'cyan', rgb: [0, 255, 255] },
+  { name: 'magenta', rgb: [255, 0, 255] },
+  { name: 'blue', rgb: [0, 0, 255] },
+  { name: 'red', rgb: [255, 0, 0] },
+  { name: 'darkGreen', rgb: [0, 128, 0] },
+  { name: 'orange', rgb: [255, 165, 0] },
+  { name: 'gray', rgb: [128, 128, 128] }
+]
+
+function colorName(color: ArrayLike<number> | null | undefined): string {
+  if (!color || color.length < 3) return 'highlight'
+  const [r, g, b] = [color[0], color[1], color[2]]
+  let best = ''
+  let bestDist = Infinity
+  for (const c of PDF_COLORS) {
+    const d = (r - c.rgb[0]) ** 2 + (g - c.rgb[1]) ** 2 + (b - c.rgb[2]) ** 2
+    if (d < bestDist) {
+      bestDist = d
+      best = c.name
+    }
+  }
+  if (bestDist <= 60 * 60) return best
+  const hex = (n: number): string => Math.round(n).toString(16).padStart(2, '0')
+  return '#' + hex(r) + hex(g) + hex(b)
+}
+
+/** The highlight's rectangles, from flat QuadPoints (8/quad) or the bounding Rect. */
+function quadsOf(annot: { quadPoints?: ArrayLike<number> | null; rect?: number[] }): Box[] {
+  const qp = annot.quadPoints
+  const boxes: Box[] = []
+  if (qp && qp.length >= 8) {
+    for (let i = 0; i + 8 <= qp.length; i += 8) {
+      const xs = [qp[i], qp[i + 2], qp[i + 4], qp[i + 6]]
+      const ys = [qp[i + 1], qp[i + 3], qp[i + 5], qp[i + 7]]
+      boxes.push({ x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) })
+    }
+  } else if (annot.rect && annot.rect.length === 4) {
+    const [a, b, c, d] = annot.rect
+    boxes.push({ x0: Math.min(a, c), x1: Math.max(a, c), y0: Math.min(b, d), y1: Math.max(b, d) })
+  }
+  return boxes
+}
+
+// A text item is "under" a quad if its horizontal centre sits within the quad
+// (tolerant) and their vertical spans overlap.
+function inside(it: Box, q: Box): boolean {
+  const cx = (it.x0 + it.x1) / 2
+  return cx >= q.x0 - 1 && cx <= q.x1 + 1 && it.y1 > q.y0 && it.y0 < q.y1
+}
+
+function orderText(items: Array<Box & { str: string }>): string {
+  return items
+    .slice()
+    .sort((a, b) => (Math.abs(a.y0 - b.y0) > 4 ? b.y0 - a.y0 : a.x0 - b.x0)) // top line first, then L→R
+    .map((i) => i.str)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export async function extractPdfHighlights(filePath: string): Promise<HighlightPassage[]> {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs')
+  const data = new Uint8Array(await fs.readFile(filePath))
+  const doc = await pdfjs.getDocument({ data, isEvalSupported: false, useSystemFonts: true }).promise
+  const out: HighlightPassage[] = []
+
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p)
+    let annots: Array<{ subtype?: string; quadPoints?: ArrayLike<number> | null; rect?: number[]; color?: ArrayLike<number> | null }>
+    try {
+      annots = (await page.getAnnotations()) as typeof annots
+    } catch {
+      continue
+    }
+    const highlights = annots.filter((a) => a.subtype === 'Highlight')
+    if (!highlights.length) continue
+
+    const tc = await page.getTextContent()
+    const items: Array<Box & { str: string }> = []
+    for (const raw of tc.items) {
+      const it = raw as { str?: string; transform?: number[]; width?: number; height?: number }
+      if (!it.str || !it.transform || !it.str.trim()) continue
+      const x0 = it.transform[4]
+      const y0 = it.transform[5]
+      items.push({ str: it.str, x0, x1: x0 + (it.width || 0), y0, y1: y0 + (it.height || 0) })
+    }
+
+    for (const a of highlights) {
+      const quads = quadsOf(a)
+      if (!quads.length) continue
+      const text = orderText(items.filter((it) => quads.some((q) => inside(it, q))))
+      if (!text) continue
+      const bandY0 = Math.min(...quads.map((q) => q.y0))
+      const bandY1 = Math.max(...quads.map((q) => q.y1))
+      const context = orderText(items.filter((it) => it.y1 > bandY0 - 2 && it.y0 < bandY1 + 2))
+      out.push({ text, color: colorName(a.color), context })
+    }
+  }
+
+  return out
+}
+
+/** Extract highlighted passages from a .docx or .pdf; [] for other types. */
+export async function extractHighlights(filePath: string): Promise<HighlightPassage[]> {
+  const ext = path.extname(filePath).toLowerCase()
+  if (ext === '.docx') return extractDocxHighlights(filePath)
+  if (ext === '.pdf') return extractPdfHighlights(filePath)
+  return []
 }

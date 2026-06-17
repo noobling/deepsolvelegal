@@ -3,6 +3,7 @@ import path from 'path'
 import type { Collection, IndexedDoc, IndexEvent } from '@shared/types'
 import { INDEXABLE_EXTENSIONS, extractText } from './extract'
 import { parseEmlFile } from './email'
+import { extractHighlights } from './highlights'
 import { addDoc, removeDoc, type LexicalIndex } from './lexical'
 import {
   getCollection,
@@ -52,9 +53,10 @@ async function walk(folders: string[]): Promise<string[]> {
   return out
 }
 
-/** Combined searchable text for a doc (headers help email search). */
+/** Combined searchable text for a doc (headers + highlighted passages help search). */
 function indexableText(doc: IndexedDoc, body: string): string {
-  return [doc.name, doc.subject, doc.from, doc.to, doc.title, body].filter(Boolean).join('\n')
+  const highlights = (doc.highlights || []).map((h) => h.text).join('\n')
+  return [doc.name, doc.subject, doc.from, doc.to, doc.title, highlights, body].filter(Boolean).join('\n')
 }
 
 export async function buildIndex(collectionId: string, emit: Emit): Promise<void> {
@@ -131,6 +133,16 @@ export async function buildIndex(collectionId: string, emit: Emit): Promise<void
       }
       body = body.slice(0, MAX_TEXT)
       doc.textChars = body.length
+
+      // Pull reviewer highlights from Word/PDF so they're stored + searchable.
+      if (ext === '.docx' || ext === '.pdf') {
+        try {
+          const hl = await extractHighlights(file)
+          if (hl.length) doc.highlights = hl
+        } catch {
+          /* highlights are best-effort */
+        }
+      }
 
       if (prev) removeDoc(lexical, prev.id)
       addDoc(lexical, id, indexableText(doc, body))

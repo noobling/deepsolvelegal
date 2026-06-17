@@ -10,7 +10,8 @@ import {
   RefreshCw,
   ExternalLink,
   Loader2,
-  ArrowUpDown
+  ArrowUpDown,
+  Highlighter
 } from 'lucide-react'
 
 type Col = { key: keyof IndexedDoc; label: string }
@@ -36,6 +37,7 @@ export default function Collection(): JSX.Element {
 
   const hasEmail = useMemo(() => (c?.docs ?? []).some((d) => d.kind === 'email'), [c])
   const hasSummary = useMemo(() => (c?.docs ?? []).some((d) => d.summary), [c])
+  const hasHighlights = useMemo(() => (c?.docs ?? []).some((d) => d.highlights?.length), [c])
 
   const columns: Col[] = useMemo(() => {
     const cols: Col[] = hasEmail
@@ -51,8 +53,9 @@ export default function Collection(): JSX.Element {
           { key: 'date', label: 'Date' }
         ]
     if (hasSummary) cols.push({ key: 'summary', label: 'Summary' })
+    if (hasHighlights) cols.push({ key: 'highlights', label: 'Highlights' })
     return cols
-  }, [hasEmail, hasSummary])
+  }, [hasEmail, hasSummary, hasHighlights])
 
   const snippetById = useMemo(() => {
     const m = new Map<string, string>()
@@ -180,14 +183,20 @@ export default function Collection(): JSX.Element {
             )}
             {rows.map((d) => (
               <tr key={d.id} className="border-b border-ink-800/60 hover:bg-ink-800/40 align-top">
-                {columns.map((col) => (
-                  <td key={String(col.key)} className="px-3 py-2 text-slate-300">
-                    <div className="line-clamp-2 max-w-[22rem]">{String(d[col.key] ?? '')}</div>
-                    {col.key === (hasEmail ? 'subject' : 'name') && snippetById.get(d.id) && (
-                      <div className="text-[11px] text-ink-600 italic mt-0.5 line-clamp-2">…{snippetById.get(d.id)}…</div>
-                    )}
-                  </td>
-                ))}
+                {columns.map((col) =>
+                  col.key === 'highlights' ? (
+                    <td key="highlights" className="px-3 py-2 text-slate-300">
+                      <HighlightsCell doc={d} />
+                    </td>
+                  ) : (
+                    <td key={String(col.key)} className="px-3 py-2 text-slate-300">
+                      <div className="line-clamp-2 max-w-[22rem]">{String(d[col.key] ?? '')}</div>
+                      {col.key === (hasEmail ? 'subject' : 'name') && snippetById.get(d.id) && (
+                        <div className="text-[11px] text-ink-600 italic mt-0.5 line-clamp-2">…{snippetById.get(d.id)}…</div>
+                      )}
+                    </td>
+                  )
+                )}
                 <td className="px-3 py-2 text-right">
                   <button
                     onClick={() => void window.api.files.reveal(d.path)}
@@ -202,6 +211,41 @@ export default function Collection(): JSX.Element {
           </tbody>
         </table>
       </div>
+    </div>
+  )
+}
+
+// CSS colours for the common Word highlight names; "#RRGGBB" fills pass through.
+const SWATCH: Record<string, string> = {
+  yellow: '#facc15',
+  green: '#4ade80',
+  cyan: '#22d3ee',
+  magenta: '#e879f9',
+  blue: '#60a5fa',
+  red: '#f87171',
+  darkGreen: '#16a34a',
+  orange: '#fb923c',
+  gray: '#9ca3af'
+}
+function swatch(color: string): string {
+  return color.startsWith('#') ? color : SWATCH[color] ?? '#facc15'
+}
+
+function HighlightsCell({ doc }: { doc: IndexedDoc }): JSX.Element {
+  const hits = doc.highlights ?? []
+  if (hits.length === 0) return <span className="text-ink-700">—</span>
+  return (
+    <div className="max-w-[24rem] space-y-1">
+      <div className="flex items-center gap-1 text-[11px] text-ink-600">
+        <Highlighter className="w-3 h-3" /> {hits.length} highlighted
+      </div>
+      {hits.slice(0, 3).map((h, i) => (
+        <div key={i} className="flex gap-1.5 items-start">
+          <span className="mt-1 w-1.5 h-3 rounded-sm shrink-0" style={{ backgroundColor: swatch(h.color) }} />
+          <span className="text-[12px] text-slate-300 line-clamp-2">{h.text}</span>
+        </div>
+      ))}
+      {hits.length > 3 && <div className="text-[11px] text-ink-600">+{hits.length - 3} more</div>}
     </div>
   )
 }

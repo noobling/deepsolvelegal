@@ -293,6 +293,13 @@ export interface Collection {
 
 export type DocKind = 'email' | 'doc'
 
+/** A passage a reviewer marked with the highlighter, recovered from a .docx/.pdf. */
+export interface DocHighlight {
+  text: string
+  /** Highlight colour: a Word colour name (e.g. "yellow") or a "#RRGGBB" fill. */
+  color: string
+}
+
 export interface IndexedDoc {
   id: string
   path: string
@@ -311,6 +318,8 @@ export interface IndexedDoc {
   summary?: string
   docType?: string
   parties?: string[]
+  /** Passages highlighted by a reviewer (.docx/.pdf). Also folded into search text. */
+  highlights?: DocHighlight[]
 }
 
 export interface CollectionDetail extends Collection {
