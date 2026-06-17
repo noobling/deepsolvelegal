@@ -86,7 +86,7 @@ export default function Workspace(): JSX.Element {
         <div className="flex-1 min-w-0">
           {isRedline ? (
             settings?.documentEditor === 'syncfusion' ? (
-              <SyncfusionPane documentText={documentText} />
+              <SyncfusionPane documentText={documentText} running={running} />
             ) : (
               <SuperDocPane docxBase64={documentDocx} running={running} />
             )
