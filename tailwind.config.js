@@ -10,7 +10,10 @@ export default {
           900: '#10162a',
           800: '#1a2238',
           700: '#26304b',
-          600: '#36425f'
+          // Muted text/icon colour. Lifted from #36425f (~1.8:1 contrast,
+          // illegible on the dark blue) to a readable blue-grey (~5:1, AA) that's
+          // still clearly secondary to the slate-100/300 primary text.
+          600: '#8a96b4'
         },
         accent: {
           DEFAULT: '#c9a24b', // brass / legal gold
