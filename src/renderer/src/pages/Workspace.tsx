@@ -4,6 +4,7 @@ import { workflowById } from '@shared/workflows'
 import Deliverable from '../components/Deliverable'
 import SuperDocPane from '../components/SuperDocPane'
 import SyncfusionPane from '../components/SyncfusionPane'
+import DotnetWordPane from '../components/DotnetWordPane'
 import ActivityRail from '../components/ActivityRail'
 import DataNotice from '../components/DataNotice'
 import { ArrowLeft, FileDown, Loader2, FileText, FileSpreadsheet, FileType, PenLine } from 'lucide-react'
@@ -85,7 +86,9 @@ export default function Workspace(): JSX.Element {
       <div className="flex-1 min-h-0 flex">
         <div className="flex-1 min-w-0">
           {isRedline ? (
-            settings?.documentEditor === 'syncfusion' ? (
+            settings?.documentEditor === 'dotnet' ? (
+              <DotnetWordPane documentDocx={documentDocx} running={running} />
+            ) : settings?.documentEditor === 'syncfusion' ? (
               <SyncfusionPane documentText={documentText} running={running} />
             ) : (
               <SuperDocPane docxBase64={documentDocx} running={running} />

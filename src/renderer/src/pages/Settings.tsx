@@ -19,7 +19,8 @@ import {
   AlertTriangle,
   Scale,
   FileText,
-  PenLine
+  PenLine,
+  ServerCog
 } from 'lucide-react'
 
 export default function Settings(): JSX.Element {
@@ -388,7 +389,7 @@ export default function Settings(): JSX.Element {
             Which embedded editor renders redlined contracts. Both show the AI’s changes as tracked
             suggestions; you can also open any redline in Microsoft Word from the workspace.
           </p>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <ProviderCard
               active={settings.documentEditor === 'superdoc'}
               onClick={() => void saveSettings({ documentEditor: 'superdoc' })}
@@ -401,7 +402,14 @@ export default function Settings(): JSX.Element {
               onClick={() => void saveSettings({ documentEditor: 'syncfusion' })}
               icon={<PenLine className="w-4 h-4" />}
               title="Syncfusion"
-              sub="Word-grade editor with a familiar ribbon. Renders entirely client-side."
+              sub="Word-grade ribbon, fully offline. Lower fidelity (no tables/styles); no server."
+            />
+            <ProviderCard
+              active={settings.documentEditor === 'dotnet'}
+              onClick={() => void saveSettings({ documentEditor: 'dotnet' })}
+              icon={<ServerCog className="w-4 h-4" />}
+              title="Word (.NET)"
+              sub="Highest fidelity — full tables/styles via the local DocEditor service (must be running)."
             />
           </div>
         </section>

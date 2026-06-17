@@ -160,7 +160,7 @@ export function localModelInfo(name: string): LocalModelInfo | null {
 export type LlmProvider = 'anthropic' | 'ollama'
 
 /** Which in-app editor renders the redlined document pane. */
-export type DocumentEditor = 'superdoc' | 'syncfusion'
+export type DocumentEditor = 'superdoc' | 'syncfusion' | 'dotnet'
 
 export interface Settings {
   /** Which LLM backend to use. */

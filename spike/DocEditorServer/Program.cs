@@ -5,6 +5,13 @@ using Syncfusion.EJ2.DocumentEditor;
 // in-app markdown→SFDT converter can't reproduce. The Electron renderer points
 // the DocumentEditorContainer's serviceUrl here.
 
+// Register the server-side (DocIO) license from SYNCFUSION_LICENSE if present.
+// Distinct from the renderer's VITE_SYNCFUSION_LICENSE — without a server key,
+// an unlicensed DocIO build can stamp a trial watermark into converted docs.
+var serverLicense = Environment.GetEnvironmentVariable("SYNCFUSION_LICENSE");
+if (!string.IsNullOrWhiteSpace(serverLicense))
+    Syncfusion.Licensing.SyncfusionLicenseProvider.RegisterLicense(serverLicense);
+
 var builder = WebApplication.CreateBuilder(args);
 
 const string CorsPolicy = "deepsolve";
