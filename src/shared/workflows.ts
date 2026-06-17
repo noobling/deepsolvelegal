@@ -43,7 +43,7 @@ export const WORKFLOWS: Workflow[] = [
     description: 'Issue-spot an agreement against your playbook and produce a redline-ready summary.',
     icon: 'FileSearch',
     outputType: 'document',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'web_search', 'write_docx', 'lint_document', 'apply_redline'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'web_search', 'write_docx', 'lint_document', 'apply_redline'],
     intakeFields: [
       {
         key: 'files',
@@ -105,7 +105,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Extract renewal and cancel-by deadlines from a set of agreements into a tracker.',
     icon: 'CalendarClock',
     outputType: 'table',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'list_dir', 'write_xlsx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'list_dir', 'write_xlsx'],
     intakeFields: [
       { key: 'files', label: 'Agreements', type: 'files', required: true, help: `Attach one or more contracts (${SUPPORTED_DOCS}).` }
     ],
@@ -120,7 +120,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Triage an incoming request or clause against escalation rules and route it.',
     icon: 'Siren',
     outputType: 'memo',
-    tools: ['read_file', 'read_pdf', 'read_docx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights'],
     intakeFields: [
       { key: 'request', label: 'The request or clause', type: 'textarea', required: true, placeholder: 'Paste the ask, email, or clause here.' },
       { key: 'files', label: 'Related documents (optional)', type: 'files' }
@@ -138,7 +138,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Draft a persuasive, well-structured demand letter from the facts and legal basis.',
     icon: 'Mail',
     outputType: 'document',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'web_search', 'write_docx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'web_search', 'write_docx'],
     intakeFields: [
       { key: 'recipient', label: 'Recipient', type: 'text', required: true, placeholder: 'Name / company being demanded' },
       { key: 'client', label: 'Our client', type: 'text', placeholder: 'Who we represent' },
@@ -157,7 +157,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Assemble a dated, sourced chronology of events from documents and notes.',
     icon: 'ListOrdered',
     outputType: 'table',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'write_xlsx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'write_xlsx'],
     intakeFields: [
       { key: 'files', label: 'Source documents', type: 'files', required: true, help: `Emails, contracts, notes (${SUPPORTED_DOCS}).` },
       { key: 'context', label: 'Matter context (optional)', type: 'textarea', placeholder: 'What is this dispute about?' }
@@ -173,7 +173,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Build a deposition outline with topic blocks, key exhibits, and questions.',
     icon: 'MessageSquareQuote',
     outputType: 'document',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'write_docx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'write_docx'],
     intakeFields: [
       { key: 'deponent', label: 'Deponent', type: 'text', required: true, placeholder: 'Who is being deposed + their role' },
       { key: 'theory', label: 'Case theory / goals', type: 'textarea', required: true, placeholder: 'What you need to establish or undermine.' },
@@ -192,7 +192,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Draft a compliant response to a data subject access request with statutory timelines.',
     icon: 'UserSearch',
     outputType: 'document',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'web_search', 'write_docx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'web_search', 'write_docx'],
     intakeFields: [
       { key: 'regime', label: 'Regime', type: 'select', required: true, options: ['GDPR', 'CCPA/CPRA', 'UK GDPR', 'Other / multiple'] },
       { key: 'request', label: 'The request', type: 'textarea', required: true, placeholder: 'Paste the data subject’s request.' },
@@ -210,7 +210,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Review a DPA from your side (controller or processor) against required terms.',
     icon: 'FileLock2',
     outputType: 'document',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'web_search', 'write_docx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'web_search', 'write_docx'],
     intakeFields: [
       { key: 'files', label: 'DPA to review', type: 'files', required: true, help: `Attach the DPA (${SUPPORTED_DOCS}).` },
       { key: 'role', label: 'We are the…', type: 'select', required: true, options: ['Controller', 'Processor', 'Sub-processor'] },
@@ -245,7 +245,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Review a set of diligence documents into one cited row-per-document table.',
     icon: 'Table2',
     outputType: 'table',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'list_dir', 'write_xlsx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'list_dir', 'write_xlsx'],
     intakeFields: [
       { key: 'files', label: 'Diligence documents', type: 'files', required: true, help: `Attach the data-room documents (${SUPPORTED_DOCS}).` },
       { key: 'focus', label: 'Review focus', type: 'text', placeholder: 'e.g. change-of-control, assignment, exclusivity' }
@@ -261,7 +261,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Generate a closing checklist with responsible parties and status from the deal terms.',
     icon: 'ListChecks',
     outputType: 'table',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'write_xlsx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'write_xlsx'],
     intakeFields: [
       { key: 'deal', label: 'Deal description', type: 'textarea', required: true, placeholder: 'Type of transaction, parties, structure.' },
       { key: 'files', label: 'Term sheet / SPA (optional)', type: 'files' }
@@ -277,7 +277,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Summarize entity compliance obligations and deadlines across jurisdictions.',
     icon: 'Landmark',
     outputType: 'table',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'web_search', 'write_xlsx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'web_search', 'write_xlsx'],
     intakeFields: [
       { key: 'entities', label: 'Entities & jurisdictions', type: 'textarea', required: true, placeholder: 'List each entity and where it is registered.' },
       { key: 'files', label: 'Org chart / filings (optional)', type: 'files' }
@@ -295,7 +295,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Quick accept / redline / escalate decision on an NDA against standard positions.',
     icon: 'FileCheck2',
     outputType: 'memo',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'write_docx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'write_docx'],
     intakeFields: [
       { key: 'files', label: 'NDA', type: 'files', required: true, help: `Attach the NDA (${SUPPORTED_DOCS}).` },
       { key: 'our_role', label: 'We are the…', type: 'select', options: ['Disclosing party', 'Receiving party', 'Mutual'] }
@@ -311,7 +311,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Review a SaaS / subscription agreement and order form for the terms that bite.',
     icon: 'Cloud',
     outputType: 'document',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'web_search', 'write_docx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'web_search', 'write_docx'],
     intakeFields: [
       { key: 'files', label: 'MSA / order form / DPA', type: 'files', required: true, help: `Attach the agreement(s) (${SUPPORTED_DOCS}).` },
       { key: 'our_role', label: 'We are the…', type: 'select', options: ['Customer', 'Vendor'] },
@@ -328,7 +328,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Reconstruct how an agreement changed across amendments into a clean change log.',
     icon: 'GitCompare',
     outputType: 'table',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'list_dir', 'write_xlsx', 'diff_documents'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'list_dir', 'write_xlsx', 'diff_documents'],
     intakeFields: [
       { key: 'files', label: 'Base agreement + amendments', type: 'files', required: true, help: `Attach the base agreement and every amendment (${SUPPORTED_DOCS}).` }
     ],
@@ -345,7 +345,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Structured intake and issue-spotting work-up for a new dispute or claim.',
     icon: 'FolderPlus',
     outputType: 'memo',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'web_search'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'web_search'],
     intakeFields: [
       { key: 'matter', label: 'What happened', type: 'textarea', required: true, placeholder: 'Parties, facts, what the dispute is about.' },
       { key: 'jurisdiction', label: 'Jurisdiction', type: 'text', placeholder: 'e.g. SDNY, California state' },
@@ -362,7 +362,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Assess a demand letter received against us and recommend a response posture.',
     icon: 'Inbox',
     outputType: 'memo',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'web_search'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'web_search'],
     intakeFields: [
       { key: 'demand', label: 'The demand', type: 'textarea', required: true, placeholder: 'Paste the demand, or summarize it and attach the letter below.' },
       { key: 'files', label: 'Demand letter (optional)', type: 'files' },
@@ -379,7 +379,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Map each element of a claim (or each limitation of a patent claim) to evidence.',
     icon: 'Grid3x3',
     outputType: 'table',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'write_xlsx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'write_xlsx'],
     intakeFields: [
       { key: 'claim', label: 'The claim or cause of action', type: 'textarea', required: true, placeholder: 'e.g. breach of contract; or paste a patent claim.' },
       { key: 'files', label: 'Evidence / documents (optional)', type: 'files' }
@@ -395,7 +395,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Assess documents or log entries for privilege and produce a defensible log.',
     icon: 'ShieldAlert',
     outputType: 'table',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'read_xlsx', 'write_xlsx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'read_xlsx', 'write_xlsx'],
     intakeFields: [
       { key: 'files', label: 'Documents or existing log', type: 'files', required: true, help: `Attach the documents or a draft log (${SUPPORTED_DOCS}).` }
     ],
@@ -429,7 +429,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Compare a privacy policy against current practices or new rules to find gaps.',
     icon: 'Radar',
     outputType: 'document',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'web_search', 'write_docx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'web_search', 'write_docx'],
     intakeFields: [
       { key: 'files', label: 'Privacy policy', type: 'files', required: true, help: `Attach the current policy (${SUPPORTED_DOCS}).` },
       { key: 'changes', label: 'New practices or reg changes (optional)', type: 'textarea', placeholder: 'What changed in the product or the law?' }
@@ -464,7 +464,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Pull a ranked issues list out of diligence documents for the deal team.',
     icon: 'ListFilter',
     outputType: 'document',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'list_dir', 'write_docx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'list_dir', 'write_docx'],
     intakeFields: [
       { key: 'files', label: 'Diligence documents', type: 'files', required: true, help: `Attach the data-room documents (${SUPPORTED_DOCS}).` },
       { key: 'deal_context', label: 'Deal context (optional)', type: 'text', placeholder: 'Type of deal, what matters most.' }
@@ -480,7 +480,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Draft board or stockholder written consents / resolutions for corporate actions.',
     icon: 'PenLine',
     outputType: 'document',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'write_docx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'write_docx'],
     intakeFields: [
       { key: 'action', label: 'What is being approved', type: 'textarea', required: true, placeholder: 'The corporate action(s) to authorize.' },
       { key: 'entity', label: 'Entity', type: 'text', placeholder: 'Entity name & type' },
@@ -497,7 +497,7 @@ SELF-AUDIT: After drafting the Issues list, re-read the checklist and the docume
     description: 'Draft formal minutes of a board meeting from an agenda or notes.',
     icon: 'NotebookPen',
     outputType: 'document',
-    tools: ['read_file', 'read_pdf', 'read_docx', 'write_docx'],
+    tools: ['read_file', 'read_pdf', 'read_docx', 'extract_highlights', 'write_docx'],
     intakeFields: [
       { key: 'notes', label: 'Agenda / notes', type: 'textarea', required: true, placeholder: 'Agenda items, what was discussed, decisions made.' },
       { key: 'entity', label: 'Entity', type: 'text' },

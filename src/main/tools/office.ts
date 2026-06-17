@@ -5,6 +5,7 @@ import type { ToolDef } from './types'
 import { resolvePath, str } from './types'
 import { markdownToDocx, markdownToXlsx } from '../export/convert'
 import { extractPdfText, extractDocxText, extractXlsxText } from '../library/extract'
+import { extractDocxHighlights } from '../library/highlights'
 
 export const readPdf: ToolDef = {
   name: 'read_pdf',
@@ -36,6 +37,33 @@ export const readDocx: ToolDef = {
       return { summary: `Read Word doc ${path.basename(file)}`, content: value || '(empty document)' }
     } catch (e) {
       return { summary: `Word read failed`, content: `Could not read .docx: ${(e as Error).message}`, isError: true }
+    }
+  }
+}
+
+export const extractHighlights: ToolDef = {
+  name: 'extract_highlights',
+  description:
+    "Extract the passages a reviewer marked with Microsoft Word's highlighter (or run shading) from a .docx file. Returns each highlighted snippet, its colour, and the surrounding clause for context. Use this to pull out the exact text a senior reviewer flagged.",
+  needsPermission: false,
+  inputSchema: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+  async run(args, ctx) {
+    const file = resolvePath(ctx, str(args, 'path'))
+    if (!existsSync(file)) return { summary: `Not found: ${file}`, content: 'File does not exist.', isError: true }
+    if (path.extname(file).toLowerCase() !== '.docx') {
+      return { summary: 'Not a .docx', content: 'Highlights can only be extracted from Word (.docx) files.', isError: true }
+    }
+    try {
+      const hits = await extractDocxHighlights(file)
+      if (hits.length === 0) {
+        return { summary: `No highlights in ${path.basename(file)}`, content: 'No highlighted text found in this document.' }
+      }
+      const content = hits
+        .map((h, i) => `${i + 1}. [${h.color}] "${h.text}"\n   in: ${h.context.slice(0, 280)}`)
+        .join('\n\n')
+      return { summary: `${hits.length} highlight${hits.length === 1 ? '' : 's'} in ${path.basename(file)}`, content }
+    } catch (e) {
+      return { summary: 'Highlight read failed', content: `Could not read highlights: ${(e as Error).message}`, isError: true }
     }
   }
 }

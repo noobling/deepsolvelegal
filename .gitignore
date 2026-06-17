@@ -10,3 +10,4 @@ release
 bundled.key
 *.tsbuildinfo
 .claude/settings.local.json
+.tmp-*
