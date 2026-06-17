@@ -6,6 +6,7 @@ import Workspace from './pages/Workspace'
 import Settings from './pages/Settings'
 import Library from './pages/Library'
 import Collection from './pages/Collection'
+import Highlights from './pages/Highlights'
 import SuperDocSpike from './pages/SuperDocSpike'
 import SyncfusionSpike from './pages/SyncfusionSpike'
 import DotnetWordSpike from './pages/DotnetWordSpike'
@@ -37,6 +38,7 @@ export default function App(): JSX.Element {
         {route === 'settings' && <Settings />}
         {route === 'library' && <Library />}
         {route === 'collection' && <Collection />}
+        {route === 'highlights' && <Highlights />}
         {route === 'superdoc-spike' && <SuperDocSpike />}
         {route === 'syncfusion-spike' && <SyncfusionSpike />}
         {route === 'dotnet-word-spike' && <DotnetWordSpike />}
