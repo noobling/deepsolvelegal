@@ -34,6 +34,9 @@ export default function Sidebar(): JSX.Element {
         <NavItem active={route === 'syncfusion-spike'} onClick={() => setRoute('syncfusion-spike')} icon={<FileText className="w-4 h-4" />}>
           Syncfusion spike
         </NavItem>
+        <NavItem active={route === 'dotnet-word-spike'} onClick={() => setRoute('dotnet-word-spike')} icon={<FileText className="w-4 h-4" />}>
+          Word + .NET spike
+        </NavItem>
       </nav>
 
       <div className="px-4 pt-3 pb-1 text-[11px] uppercase tracking-wider text-ink-600">Recent matters</div>

@@ -1,0 +1,3 @@
+# .NET build artifacts — restored via `dotnet build`/`dotnet restore`.
+bin/
+obj/
