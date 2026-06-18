@@ -1,21 +1,13 @@
 import { promises as fs } from 'fs'
 import path from 'path'
+import type { EmailToPdfResult } from '@shared/types'
 import { parseEmlFile } from '../library/email'
 import { markdownToPdf } from './convert'
 
 // Batch-convert .eml files in a folder tree to PDFs, mirroring the subfolder
 // structure into an output folder. Non-email files are skipped.
 
-export interface EmailToPdfResult {
-  /** .eml files successfully converted. */
-  converted: number
-  /** Non-.eml files encountered and left alone. */
-  skipped: number
-  /** Files that matched .eml but failed to convert. */
-  errors: { file: string; error: string }[]
-  /** Absolute paths of the PDFs written. */
-  outputs: string[]
-}
+export type { EmailToPdfResult }
 
 // parseEmlFile reads the .eml as latin1 (to tolerate any bytes), so a UTF-8 body
 // arrives byte-mangled. Re-decode as UTF-8, but only when the bytes are valid

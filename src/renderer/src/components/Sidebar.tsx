@@ -1,5 +1,5 @@
 import { useStore, providerReady } from '../state/store'
-import { Scale, LayoutGrid, Library, Settings as SettingsIcon, FileText, KeyRound, Cpu, Loader2 } from 'lucide-react'
+import { Scale, LayoutGrid, Library, Settings as SettingsIcon, FileText, KeyRound, Cpu, Loader2, Mail } from 'lucide-react'
 
 export default function Sidebar(): JSX.Element {
   const { route, setRoute, matters, openMatter, currentMatterId, settings, keyPresent, runningMatters } = useStore()
@@ -24,6 +24,9 @@ export default function Sidebar(): JSX.Element {
         </NavItem>
         <NavItem active={route === 'library' || route === 'collection'} onClick={() => setRoute('library')} icon={<Library className="w-4 h-4" />}>
           Library
+        </NavItem>
+        <NavItem active={route === 'email-to-pdf'} onClick={() => setRoute('email-to-pdf')} icon={<Mail className="w-4 h-4" />}>
+          Email → PDF
         </NavItem>
         <NavItem active={route === 'settings'} onClick={() => setRoute('settings')} icon={<SettingsIcon className="w-4 h-4" />}>
           Settings

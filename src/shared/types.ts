@@ -274,6 +274,19 @@ export interface ExportResult {
 
 export type PermissionDecision = 'allow' | 'allow-always' | 'deny'
 
+// ---- Email → PDF batch conversion ----
+
+export interface EmailToPdfResult {
+  /** .eml files successfully converted. */
+  converted: number
+  /** Non-.eml files encountered and left alone. */
+  skipped: number
+  /** Files that matched .eml but failed to convert. */
+  errors: { file: string; error: string }[]
+  /** Absolute paths of the PDFs written. */
+  outputs: string[]
+}
+
 // ---- Library / document index ----
 
 export type CollectionStatus = 'idle' | 'indexing' | 'ready' | 'error'
@@ -394,6 +407,10 @@ export interface Api {
     exportHighlights: (id: string, format: 'csv' | 'xlsx') => Promise<ExportResult>
     pickFolders: () => Promise<string[]>
     onEvent: (cb: (e: IndexEvent) => void) => () => void
+  }
+  emailToPdf: {
+    pickFolder: () => Promise<string | null>
+    convert: (inputDir: string, outputDir: string) => Promise<EmailToPdfResult>
   }
   export: (input: ExportInput) => Promise<ExportResult>
 }

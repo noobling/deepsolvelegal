@@ -68,6 +68,11 @@ const api: Api = {
       return () => ipcRenderer.removeListener('index:event', listener)
     }
   },
+  emailToPdf: {
+    pickFolder: () => ipcRenderer.invoke('emailToPdf:pickFolder'),
+    convert: (inputDir: string, outputDir: string) =>
+      ipcRenderer.invoke('emailToPdf:convert', inputDir, outputDir)
+  },
   export: (input: ExportInput) => ipcRenderer.invoke('export', input)
 }
 

@@ -12,7 +12,7 @@ import type {
   ToolActivity
 } from '@shared/types'
 
-export type Route = 'launchpad' | 'workspace' | 'settings' | 'library' | 'collection' | 'highlights' | 'superdoc-spike' | 'syncfusion-spike' | 'dotnet-word-spike'
+export type Route = 'launchpad' | 'workspace' | 'settings' | 'library' | 'collection' | 'highlights' | 'email-to-pdf' | 'superdoc-spike' | 'syncfusion-spike' | 'dotnet-word-spike'
 
 /**
  * Live IPC subscriptions. Held at module scope so `init()` is idempotent:

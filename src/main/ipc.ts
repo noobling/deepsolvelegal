@@ -27,6 +27,7 @@ import { createOllamaProvider } from './agent/ollama'
 import { cancel, sendMessage, startThread } from './agent/runAgent'
 import { resolvePermission } from './permissions'
 import { markdownToDocx, markdownToPdf, markdownToXlsx, markdownToTrackedDocx, rowsToXlsx } from './export/convert'
+import { convertEmailsToPdf } from './export/emailToPdf'
 import { getDocument } from './storage/store'
 import {
   deleteCollection,
@@ -287,6 +288,16 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       return { ok: false, error: (e as Error).message }
     }
   })
+
+  // Email → PDF (also usable from the UI, not just the agent tool).
+  ipcMain.handle('emailToPdf:pickFolder', async (): Promise<string | null> => {
+    const win = getWindow()
+    const res = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'] })
+    return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
+  })
+  ipcMain.handle('emailToPdf:convert', (_e, inputDir: string, outputDir: string) =>
+    convertEmailsToPdf(inputDir, outputDir)
+  )
 
   ipcMain.handle('library:exportHighlights', async (_e, id: string, format: 'csv' | 'xlsx'): Promise<ExportResult> => {
     try {
