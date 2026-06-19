@@ -22,6 +22,7 @@
     "@syncfusion/ej2-react-documenteditor": "^33.2.13",
     "docx": "^9.5.1",
     "exceljs": "^4.4.0",
+    "mailparser": "^3.9.10",
     "mammoth": "^1.9.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.10.38",
@@ -37,6 +38,7 @@
   },
   "devDependencies": {
     "@electron/packager": "^18.3.6",
+    "@types/mailparser": "^3.4.6",
     "@types/node": "^22.13.10",
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",

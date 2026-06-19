@@ -83,6 +83,8 @@ export default function EmailToPdf(): JSX.Element {
               {result.converted} email{result.converted === 1 ? '' : 's'} converted
             </div>
             <div className="mt-1.5 text-[12.5px] text-ink-600">
+              {result.attachments} attachment{result.attachments === 1 ? '' : 's'} extracted
+              {' · '}
               {result.skipped} non-email file{result.skipped === 1 ? '' : 's'} skipped
               {result.errors.length > 0 && ` · ${result.errors.length} failed`}
             </div>

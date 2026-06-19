@@ -281,6 +281,8 @@ export interface EmailToPdfResult {
   converted: number
   /** Non-.eml files encountered and left alone. */
   skipped: number
+  /** Attachments extracted to "<name> - attachments" folders. */
+  attachments: number
   /** Files that matched .eml but failed to convert. */
   errors: { file: string; error: string }[]
   /** Absolute paths of the PDFs written. */

@@ -93,6 +93,7 @@ export const convertEmailsToPdfTool: ToolDef = {
       const r = await convertEmailsToPdf(input, output)
       const lines = [
         `Converted ${r.converted} email${r.converted === 1 ? '' : 's'} to PDF in ${output}`,
+        `Extracted ${r.attachments} attachment${r.attachments === 1 ? '' : 's'} to "<name> - attachments" folders.`,
         `Skipped ${r.skipped} non-email file${r.skipped === 1 ? '' : 's'}.`
       ]
       if (r.errors.length) lines.push(`${r.errors.length} failed: ${r.errors.map((e) => path.basename(e.file)).join(', ')}`)
