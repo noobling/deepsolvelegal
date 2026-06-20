@@ -151,6 +151,38 @@ async function collectEml(dir: string, skipDir: string, found: string[], counts:
   }
 }
 
+interface EmailRecord {
+  begBates: string
+  endBates: string
+  pages: number
+  dateISO: string
+  from: string
+  to: string
+  cc: string
+  subject: string
+  fileRel: string
+  attCount: number
+  attNames: string
+}
+
+// Concordance/Relativity .DAT load file: text qualifier U+00FE, field
+// separator U+0014; CRLF rows; UTF-8 BOM.
+function toDat(rows: string[][]): string {
+  const q = '\u00FE'
+  const sep = '\u0014'
+  // Strip the structural delimiters (qualifier/separator) from values and flatten
+  // any stray newline to a space, so a delimiter char in a subject/name/path can't
+  // corrupt the column layout. (These are all single-line metadata fields.)
+  const cell = (c: string): string => q + (c || '').replace(/[\u00FE\u0014]/g, '').replace(/[\r\n]+/g, ' ') + q
+  return '\uFEFF' + rows.map((r) => r.map(cell).join(sep)).join('\r\n') + '\r\n'
+}
+
+// Universal CSV (UTF-8 BOM so Excel reads it; RFC-4180 quoting).
+function toCsv(rows: string[][]): string {
+  const cell = (c: string): string => (/[",\r\n]/.test(c) ? '"' + c.replace(/"/g, '""') + '"' : c)
+  return '\uFEFF' + rows.map((r) => r.map((c) => cell(c || '')).join(',')).join('\r\n') + '\r\n'
+}
+
 export async function convertEmailsToPdf(
   inputDir: string,
   outputDir: string,
@@ -171,7 +203,8 @@ export async function convertEmailsToPdf(
   const batesPrefix = options.bates?.prefix ?? ''
   let batesNext = options.bates?.start ?? 1
   const PAD = 6
-  const indexRows: string[][] = []
+  const addr = (v: ParsedMail['to']): string => (Array.isArray(v) ? v.map((t) => t.text).join('; ') : v?.text) || ''
+  const records: EmailRecord[] = []
 
   const win = makeRenderWindow() // one shared window for the whole batch
   try {
@@ -224,19 +257,19 @@ export async function convertEmailsToPdf(
         }
       }
 
-      const toText = (v: ParsedMail['to']): string =>
-        Array.isArray(v) ? v.map((t) => t.text).join('; ') : v?.text || ''
-      indexRows.push([
-        bBegin,
-        bEnd,
-        pageCount ? String(pageCount) : '',
-        mail.date ? mail.date.toISOString().slice(0, 10) : '',
-        mail.from?.text || '',
-        toText(mail.to),
-        mail.subject || '',
-        String(fileAttachments.length),
-        fileAttachments.map((a) => a.filename || 'attachment').join('; ')
-      ])
+      records.push({
+        begBates: bBegin,
+        endBates: bEnd,
+        pages: pageCount,
+        dateISO: mail.date ? mail.date.toISOString().slice(0, 10) : '',
+        from: mail.from?.text || '',
+        to: addr(mail.to),
+        cc: addr(mail.cc),
+        subject: mail.subject || '',
+        fileRel: path.relative(outRoot, outPath),
+        attCount: fileAttachments.length,
+        attNames: fileAttachments.map((a) => a.filename || 'attachment').join('; ')
+      })
     } catch (e) {
       result.errors.push({ file: eml, error: (e as Error).message })
     }
@@ -246,18 +279,49 @@ export async function convertEmailsToPdf(
     win.destroy()
   }
 
-  if (options.bates && indexRows.length) {
-    const first = indexRows.find((r) => r[0])
-    const last = [...indexRows].reverse().find((r) => r[1])
-    if (first && last) result.batesRange = { begin: first[0], end: last[1] }
+  if (options.bates && records.length) {
+    const first = records.find((r) => r.begBates)
+    const last = [...records].reverse().find((r) => r.endBates)
+    if (first && last) result.batesRange = { begin: first.begBates, end: last.endBates }
   }
 
-  if (options.index && indexRows.length) {
+  // INTERNAL review index — human-readable spreadsheet for your own team.
+  if (options.index && records.length) {
     const header = ['Bates Begin', 'Bates End', 'Pages', 'Date', 'From', 'To', 'Subject', '# Attachments', 'Attachments']
-    const buf = await rowsToXlsx([header, ...indexRows], 'Production Index')
+    const rows = records.map((r) => [
+      r.begBates,
+      r.endBates,
+      r.pages ? String(r.pages) : '',
+      r.dateISO,
+      r.from,
+      r.to,
+      r.subject,
+      String(r.attCount),
+      r.attNames
+    ])
+    const buf = await rowsToXlsx([header, ...rows], 'Production Index')
     const indexPath = path.join(outRoot, 'Production Index.xlsx')
     await fs.writeFile(indexPath, buf)
     result.indexPath = indexPath
+  }
+
+  // EXTERNAL production load file — standardized fields + family ranges for the
+  // receiving party's review platform. .DAT (Concordance delimiters) + a .CSV.
+  if (options.loadFile && records.length) {
+    const header = [
+      'BEGBATES', 'ENDBATES', 'BEGATTACH', 'ENDATTACH', 'CUSTODIAN', 'DATE SENT',
+      'FROM', 'TO', 'CC', 'SUBJECT', 'FILE NAME', 'PAGE COUNT', 'ATTACHMENT NAMES'
+    ]
+    // Each produced email PDF is one document; the family range spans the email +
+    // its (merged) attachments, i.e. the document's own Bates range.
+    const rows = records.map((r) => [
+      r.begBates, r.endBates, r.begBates, r.endBates, '', r.dateISO,
+      r.from, r.to, r.cc, r.subject, r.fileRel, r.pages ? String(r.pages) : '', r.attNames
+    ])
+    const datPath = path.join(outRoot, 'Production Load File.dat')
+    await fs.writeFile(datPath, toDat([header, ...rows]))
+    await fs.writeFile(path.join(outRoot, 'Production Load File.csv'), toCsv([header, ...rows]))
+    result.loadFilePath = datPath
   }
 
   return result

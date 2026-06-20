@@ -289,8 +289,10 @@ export interface EmailToPdfOptions {
   combineAttachments?: boolean
   /** Stamp every page with a sequential Bates number, or null for none. */
   bates?: { prefix: string; start: number } | null
-  /** Write a production index spreadsheet (Bates range + metadata per email). */
+  /** Write an INTERNAL review index spreadsheet (Bates range + metadata per email). */
   index?: boolean
+  /** Write an EXTERNAL production load file (.DAT + .CSV) for opposing counsel. */
+  loadFile?: boolean
 }
 
 export interface EmailToPdfResult {
@@ -306,8 +308,10 @@ export interface EmailToPdfResult {
   outputs: string[]
   /** First/last Bates numbers across the set (when Bates stamping is on). */
   batesRange?: { begin: string; end: string }
-  /** Path to the production index spreadsheet (when requested). */
+  /** Path to the internal review index spreadsheet (when requested). */
   indexPath?: string
+  /** Path to the external production load file (.DAT; a .CSV is written too). */
+  loadFilePath?: string
 }
 
 // ---- Library / document index ----

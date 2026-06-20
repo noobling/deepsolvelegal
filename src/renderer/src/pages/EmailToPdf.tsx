@@ -28,6 +28,7 @@ export default function EmailToPdf(): JSX.Element {
   const [batesPrefix, setBatesPrefix] = useState('DOC-')
   const [batesStart, setBatesStart] = useState('1')
   const [index, setIndex] = useState(true)
+  const [loadFile, setLoadFile] = useState(false)
   const [progress, setProgress] = useState<EmailToPdfProgress | null>(null)
   const startRef = useRef(0)
 
@@ -52,7 +53,8 @@ export default function EmailToPdf(): JSX.Element {
       const r = await window.api.emailToPdf.convert(input, output, {
         combineAttachments: combine,
         bates: bates ? { prefix: batesPrefix, start: Math.max(1, parseInt(batesStart, 10) || 1) } : null,
-        index
+        index,
+        loadFile
       })
       setResult(r)
       setToast(`Converted ${r.converted} email${r.converted === 1 ? '' : 's'} to PDF.`)
@@ -112,8 +114,23 @@ export default function EmailToPdf(): JSX.Element {
             )}
             <label className="flex items-start gap-2.5 text-[12.5px] text-slate-300 cursor-pointer">
               <input type="checkbox" checked={index} onChange={(e) => setIndex(e.target.checked)} className="mt-0.5 accent-accent" />
-              <span>Generate a production index (Excel) — Bates range, date, from, to, subject, attachments</span>
+              <span>
+                Internal review index (Excel) — Bates range, date, from, to, subject, attachments
+                <span className="text-ink-600"> · for your own team</span>
+              </span>
             </label>
+            <label className="flex items-start gap-2.5 text-[12.5px] text-slate-300 cursor-pointer">
+              <input type="checkbox" checked={loadFile} onChange={(e) => setLoadFile(e.target.checked)} className="mt-0.5 accent-accent" />
+              <span>
+                External production load file (.DAT + .CSV) — for opposing counsel / review platforms
+                <span className="text-ink-600"> · standard fields + family ranges (BegAttach/EndAttach)</span>
+              </span>
+            </label>
+            {loadFile && !bates && (
+              <div className="ml-7 -mt-1 text-[11.5px] text-amber-300/80">
+                Turn on Bates numbering — a production load file needs Bates numbers in its BEGBATES/ENDBATES fields.
+              </div>
+            )}
           </div>
 
           <button
@@ -166,7 +183,12 @@ export default function EmailToPdf(): JSX.Element {
               </div>
             )}
             {result.indexPath && (
-              <div className="mt-0.5 text-[12.5px] text-ink-600">Production index: {result.indexPath.split('/').pop()}</div>
+              <div className="mt-0.5 text-[12.5px] text-ink-600">Internal index: {result.indexPath.split('/').pop()}</div>
+            )}
+            {result.loadFilePath && (
+              <div className="mt-0.5 text-[12.5px] text-ink-600">
+                Production load file: {result.loadFilePath.split('/').pop()} + .csv
+              </div>
             )}
 
             {result.errors.length > 0 && (
