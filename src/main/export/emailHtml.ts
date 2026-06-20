@@ -90,21 +90,36 @@ export function isSignatureGraphic(buf?: Buffer, filename?: string): boolean {
 }
 
 /**
+ * Set-wide identity of an image attachment (filename + exact byte size). A real
+ * signature logo is the same file re-attached to many emails, so this fingerprint
+ * repeats across the set; a one-off photo does not. production.ts prescans the set,
+ * counts fingerprints, and passes back the ones that recur (see recurringImageFps).
+ */
+export function attFingerprint(filename = '', size = 0): string {
+  return filename.trim().toLowerCase() + '|' + size
+}
+
+/**
  * Whether a file attachment is likely non-substantive and can be set aside for
- * review (Excluded/) rather than produced. Two signals, both opt-in:
- *  - a logo/icon image (small in bytes AND pixels) when excludeSignatures is on —
- *    reuses the inline-image heuristic, so photos/screenshots are still kept;
+ * review (Excluded/) rather than produced. Signals, all opt-in:
  *  - any file smaller than `underBytes` (the user's "small ⇒ probably not important"
- *    threshold), regardless of type.
+ *    threshold), regardless of type;
+ *  - when excludeSignatures is on, an image that is either a logo/icon by itself
+ *    (small in bytes AND pixels — keeps photos/screenshots) OR whose fingerprint
+ *    recurs across the set (a signature graphic re-attached to many emails — caught
+ *    regardless of its individual size).
  * Excluding only sets a file aside for review — it is never deleted.
  */
 export function isInsignificantAttachment(
   a: Attachment,
-  opts: { excludeSignatures?: boolean; underBytes?: number }
+  opts: { excludeSignatures?: boolean; underBytes?: number; recurringImageFps?: Set<string> }
 ): boolean {
   const size = a.content?.length || 0
   if (opts.underBytes && size > 0 && size < opts.underBytes) return true
-  if (opts.excludeSignatures && a.contentType?.startsWith('image/') && isSignatureGraphic(a.content, a.filename)) return true
+  if (opts.excludeSignatures && a.contentType?.startsWith('image/')) {
+    if (isSignatureGraphic(a.content, a.filename)) return true
+    if (opts.recurringImageFps?.has(attFingerprint(a.filename, size))) return true
+  }
   return false
 }
 
@@ -125,11 +140,12 @@ export function stripBoilerplate(html: string): string {
 
 export function buildEmailHtml(
   mail: ParsedMail,
-  opts: { excludeSignatures?: boolean; excludeAttachments?: string[]; excludeUnderBytes?: number } = {}
+  opts: { excludeSignatures?: boolean; excludeAttachments?: string[]; excludeUnderBytes?: number; recurringImageFps?: Set<string> } = {}
 ): { html: string; fileAttachments: Attachment[]; excludedAttachments: Attachment[] } {
   const atts = (mail.attachments || []) as Attachment[]
   const excludeSignatures = !!opts.excludeSignatures
   const excludeUnderBytes = opts.excludeUnderBytes || 0
+  const recurringImageFps = opts.recurringImageFps
   const excludeNames = new Set((opts.excludeAttachments || []).map((s) => s.trim().toLowerCase()).filter(Boolean))
   let body = typeof mail.html === 'string' && mail.html ? mail.html : mail.textAsHtml || '<p>(no message body)</p>'
 
@@ -165,7 +181,8 @@ export function buildEmailHtml(
     const a = byId.get(cid) || orderMap.get(cid)
     if (a && a.contentType?.startsWith('image/')) {
       embedded.add(a)
-      if (excludeSignatures && isSignatureGraphic(a.content, a.filename)) {
+      const recurringLogo = !!recurringImageFps?.has(attFingerprint(a.filename, a.content?.length || 0))
+      if (excludeSignatures && (isSignatureGraphic(a.content, a.filename) || recurringLogo)) {
         // Drop signature logos / social icons entirely (content photos are kept).
         body = body.replace(new RegExp('<img[^>]*cid:' + escRe(cid) + '[^>]*>', 'gi'), '')
         body = body.split('cid:' + cid).join(TRANSPARENT_PX)
@@ -194,7 +211,7 @@ export function buildEmailHtml(
   const allAttachments = atts.filter((a) => !embedded.has(a))
   const isExcluded = (a: Attachment): boolean =>
     excludeNames.has((a.filename || '').trim().toLowerCase()) ||
-    isInsignificantAttachment(a, { excludeSignatures, underBytes: excludeUnderBytes })
+    isInsignificantAttachment(a, { excludeSignatures, underBytes: excludeUnderBytes, recurringImageFps })
   const excludedAttachments = allAttachments.filter(isExcluded)
   const fileAttachments = allAttachments.filter((a) => !isExcluded(a))
 

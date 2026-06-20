@@ -2,7 +2,7 @@ import { promises as fs } from 'fs'
 import path from 'path'
 import { simpleParser, type ParsedMail } from 'mailparser'
 import type { Collection, IndexedDoc, IndexEvent, ProcessFeatures, ProductionResult } from '@shared/types'
-import { buildEmailHtml } from './emailHtml'
+import { buildEmailHtml, attFingerprint } from './emailHtml'
 import { combineFamily, makeRenderWindow, renderInto, safeName, stampBates, toCsv, toDat } from './emailToPdf'
 import { renderDocToPdf, slipSheet } from './docToPdf'
 import { rowsToXlsx } from './convert'
@@ -35,7 +35,18 @@ type Emit = (e: IndexEvent) => void
 
 const PAD = 6
 
+// An image attachment whose fingerprint (name+size) appears in at least this many
+// emails is treated as a recurring signature logo, not a one-off picture.
+const MIN_RECURRENCE = 3
+
 const addr = (v: ParsedMail['to']): string => (Array.isArray(v) ? v.map((t) => t.text).join('; ') : v?.text) || ''
+
+/** Cheap, stable string hash (djb2) for fingerprinting the recurring-logo set. */
+function hashStr(s: string): string {
+  let h = 5381
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
+  return (h >>> 0).toString(36)
+}
 
 /** Filename + size of an excluded attachment (no content). */
 interface ExcludedMeta {
@@ -66,7 +77,7 @@ async function produceOne(
   doc: IndexedDoc,
   outRoot: string,
   rel: string,
-  opts: { convert: boolean; combine: boolean; assignBates: boolean; prefix: string; batesStart: number; excludeSignatures: boolean; excludeAttachments: string[]; excludeUnderBytes: number },
+  opts: { convert: boolean; combine: boolean; assignBates: boolean; prefix: string; batesStart: number; excludeSignatures: boolean; excludeAttachments: string[]; excludeUnderBytes: number; recurringImageFps: Set<string> },
   used: Set<string>,
   result: ProductionResult,
   excludedSink: ExcludedAtt[]
@@ -147,7 +158,7 @@ async function produceOne(
 
   if (ext === '.eml') {
     const mail = await simpleParser(await fs.readFile(doc.path))
-    const built = buildEmailHtml(mail, { excludeSignatures: opts.excludeSignatures, excludeAttachments: opts.excludeAttachments, excludeUnderBytes: opts.excludeUnderBytes })
+    const built = buildEmailHtml(mail, { excludeSignatures: opts.excludeSignatures, excludeAttachments: opts.excludeAttachments, excludeUnderBytes: opts.excludeUnderBytes, recurringImageFps: opts.recurringImageFps })
     pdf = await renderInto(win, built.html)
     if (opts.combine && built.fileAttachments.length) pdf = await combineFamily(pdf, built.fileAttachments)
     // Excluded-by-filename attachments are routed to Excluded/, not the family folder.
@@ -353,20 +364,68 @@ export async function buildProduction(
   // Scan input-vs-output: reuse documents that are unchanged AND would land on the
   // same Bates number; only (re)render new/changed docs (or ones whose numbering
   // shifted because something earlier in the sequence changed).
+  type AttFpEntry = { mtime: number; size: number; imgs: string[] }
+  const saved = (await getProductionManifest(collection.id)) as {
+    config?: string
+    items?: ProdItem[]
+    attFp?: Record<string, AttFpEntry>
+  } | null
+
+  // Set-wide prescan: fingerprint each email's image attachments and flag the ones
+  // that recur across many emails as signature logos — a real picture is attached
+  // once, a logo is re-attached to every message. Fingerprints are cached per-doc in
+  // the manifest, so an incremental run only re-parses changed emails. Only needed
+  // when excluding signatures (the feature that acts on the flagged logos).
+  const savedAttFp = saved?.attFp ?? {}
+  const attFp: Record<string, AttFpEntry> = {}
+  const recurringImageFps = new Set<string>()
+  if (collection.excludeSignatures) {
+    emit({ type: 'index-progress', collectionId: collection.id, phase: 'Scanning for repeated logos', done: 0, total: targets.length })
+    const freq = new Map<string, number>()
+    for (const doc of targets) {
+      if (isCancelled()) break
+      if (doc.kind !== 'email') continue
+      let entry = savedAttFp[doc.id]
+      if (!entry || entry.mtime !== doc.modifiedAt || entry.size !== doc.size) {
+        try {
+          const mail = await simpleParser(await fs.readFile(doc.path))
+          const imgs = [
+            ...new Set(
+              (mail.attachments || [])
+                .filter((a) => (a.contentType || '').startsWith('image/'))
+                .map((a) => attFingerprint(a.filename, a.content?.length || 0))
+            )
+          ]
+          entry = { mtime: doc.modifiedAt, size: doc.size, imgs }
+        } catch {
+          entry = { mtime: doc.modifiedAt, size: doc.size, imgs: [] }
+        }
+      }
+      attFp[doc.id] = entry
+      for (const fp of entry.imgs) freq.set(fp, (freq.get(fp) || 0) + 1) // imgs are deduped per doc
+    }
+    for (const [fp, n] of freq) if (n >= MIN_RECURRENCE) recurringImageFps.add(fp)
+  }
+  const recurringHash = hashStr([...recurringImageFps].sort().join('\n'))
+
+  // Scan input-vs-output: reuse documents that are unchanged AND would land on the
+  // same Bates number; only (re)render new/changed docs (or ones whose numbering
+  // shifted because something earlier in the sequence changed).
   emit({ type: 'index-progress', collectionId: collection.id, phase: 'Checking for changes', done: 0, total: targets.length })
   // Render options that change the output. If any differ from the last run, the
-  // cached PDFs are stale, so ignore the manifest and re-render everything.
+  // cached PDFs are stale, so ignore the manifest and re-render everything. The
+  // recurring-logo set is included: if it shifts, every email must re-render.
   const configKey = JSON.stringify({
     combine: !!collection.combineAttachments,
     excludeSignatures: !!collection.excludeSignatures,
     excludeAttachments: [...excludeAttachments].map((s) => s.trim().toLowerCase()).sort(),
     excludeUnderBytes,
+    recurringHash,
     bates: collection.bates ?? null,
     emailToPdf: features.emailToPdf,
     reviewIndex: features.reviewIndex,
     loadFile: features.loadFile
   })
-  const saved = (await getProductionManifest(collection.id)) as { config?: string; items?: ProdItem[] } | null
   const prevManifest = saved && saved.config === configKey ? saved.items ?? [] : []
   const prevById = new Map(prevManifest.map((p) => [p.id, p]))
   const currentIds = new Set(targets.map((d) => d.id))
@@ -401,7 +460,7 @@ export async function buildProduction(
         continue
       }
       try {
-        const { rec, excludedMeta } = await produceOne(win, doc, outRoot, relFor(doc.path), { convert, combine: !!collection.combineAttachments, assignBates, prefix, batesStart: batesNext, excludeSignatures: !!collection.excludeSignatures, excludeAttachments, excludeUnderBytes }, used, result, excludedSink)
+        const { rec, excludedMeta } = await produceOne(win, doc, outRoot, relFor(doc.path), { convert, combine: !!collection.combineAttachments, assignBates, prefix, batesStart: batesNext, excludeSignatures: !!collection.excludeSignatures, excludeAttachments, excludeUnderBytes, recurringImageFps }, used, result, excludedSink)
         items.push({ id: doc.id, path: doc.path, mtime: doc.modifiedAt, size: doc.size, excluded: excludedMeta, ...rec })
         batesNext += rec.batesSpan
         result.processed++
@@ -427,7 +486,9 @@ export async function buildProduction(
   }
 
   // Persist the manifest (full or partial) so a paused run resumes from here.
-  await saveProductionManifest(collection.id, { config: configKey, items })
+  // attFp caches the attachment fingerprints so the next run's prescan can skip
+  // re-parsing unchanged emails.
+  await saveProductionManifest(collection.id, { config: configKey, items, attFp: collection.excludeSignatures ? attFp : savedAttFp })
   // Paused/cancelled mid-render: leave the index/load-file regeneration for the
   // resume run (when the full set is produced).
   if (isCancelled()) return result

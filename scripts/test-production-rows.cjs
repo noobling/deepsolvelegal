@@ -100,5 +100,14 @@ check('screenshot filename protected even if small', ins(att(8 * 1024, 'image/pn
 check('large image kept (content photo)', ins(att(200 * 1024, 'image/png', 'banner.png'), { excludeSignatures: true }) === false)
 check('non-image small file ignored by signature filter', ins(att(8 * 1024, 'application/pdf', 'tiny.pdf'), { excludeSignatures: true }) === false)
 
+console.log('recurring-logo detection (set-wide repeat):')
+const fp = eh.attFingerprint
+check('fingerprint is name|size, case-insensitive', fp('Logo.PNG', 1234) === 'logo.png|1234')
+const recur = new Set([fp('banner.png', 200 * 1024)])
+check('large recurring image → set aside (beats size heuristic)', ins(att(200 * 1024, 'image/png', 'banner.png'), { excludeSignatures: true, recurringImageFps: recur }) === true)
+check('same image, NOT in recurring set → kept', ins(att(200 * 1024, 'image/png', 'banner.png'), { excludeSignatures: true, recurringImageFps: new Set() }) === false)
+check('recurring image needs excludeSignatures', ins(att(200 * 1024, 'image/png', 'banner.png'), { recurringImageFps: recur }) === false)
+check('recurring set ignores non-images', ins(att(200 * 1024, 'application/pdf', 'banner.png'), { excludeSignatures: true, recurringImageFps: recur }) === false)
+
 console.log('\n' + (ok ? 'ALL PASS ✓' : 'FAILURES ✗'))
 process.exit(ok ? 0 : 1)

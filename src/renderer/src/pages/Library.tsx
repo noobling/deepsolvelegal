@@ -385,7 +385,7 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
               <input type="checkbox" checked={excludeSignatures} onChange={(e) => setExcludeSignatures(e.target.checked)} className="mt-0.5 accent-[#c9a24b]" />
               <span>
                 Exclude email signatures &amp; logos
-                <span className="text-ink-600"> · removes logo/icon images (inline <span className="text-slate-400">and</span> as attachments) + footer boilerplate; keeps content photos &amp; text</span>
+                <span className="text-ink-600"> · removes logo/icon images (inline <span className="text-slate-400">and</span> as attachments), <span className="text-slate-400">images that repeat across the set</span> (recurring signature graphics), + footer boilerplate; keeps content photos &amp; text</span>
               </span>
             </label>
             <div>
