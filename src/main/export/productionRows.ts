@@ -86,23 +86,49 @@ export function highlightRows(docs: Pick<IndexedDoc, 'name' | 'highlights'>[]): 
   return rows
 }
 
+// Two copies of a same-named attachment count as "the same" document when their
+// sizes are within this tolerance — exact bytes needn't match, since a re-encode or
+// an embedded timestamp shifts a few bytes (or none) without changing the document.
+const SIZE_TOL_FRAC = 0.02 // ±2%
+const SIZE_TOL_MIN = 256 // bytes (floor, so tiny files aren't over-split)
+
+/** Whether two file sizes are close enough to be treated as the same document. */
+export function sameApproxSize(a: number, b: number): boolean {
+  return Math.abs(a - b) <= Math.max(SIZE_TOL_MIN, Math.floor(Math.max(a, b) * SIZE_TOL_FRAC))
+}
+
+/**
+ * Cluster sizes so copies within tolerance group together: sort ascending and
+ * start a new cluster wherever the gap to the previous size exceeds tolerance.
+ * One cluster ⇒ consistent; two or more ⇒ genuinely different files share a name.
+ */
+export function sizeClusters(sizes: number[]): number[][] {
+  const clusters: number[][] = []
+  for (const s of [...sizes].sort((a, b) => a - b)) {
+    const last = clusters[clusters.length - 1]
+    if (last && sameApproxSize(last[last.length - 1], s)) last.push(s)
+    else clusters.push([s])
+  }
+  return clusters
+}
+
 /**
  * Summarize excluded attachments for the whole set. Copies of a filename are
- * "consistent" when byte-identical (same content hash); a filename with two or
- * more distinct hashes is flagged for review (one of them may be a real document
- * misnamed like the boilerplate). Counts are derived from metadata so they stay
- * correct on incremental runs without re-reading skipped documents.
+ * "consistent" when their sizes fall in one tolerance cluster (see sizeClusters);
+ * a filename whose copies split into two or more clusters is flagged for review
+ * (one may be a real document misnamed like the boilerplate). Counts are derived
+ * from metadata so they stay correct on incremental runs without re-reading docs.
  */
-export function excludedSummary(meta: { name: string; hash: string }[]): { total: number; inconsistentNames: number } {
-  const byName = new Map<string, Set<string>>()
+export function excludedSummary(meta: { name: string; size: number }[]): { total: number; inconsistentNames: number } {
+  const byName = new Map<string, number[]>()
   for (const m of meta) {
     const key = m.name.trim().toLowerCase()
-    const hashes = byName.get(key)
-    if (hashes) hashes.add(m.hash)
-    else byName.set(key, new Set([m.hash]))
+    const sizes = byName.get(key)
+    if (sizes) sizes.push(m.size)
+    else byName.set(key, [m.size])
   }
   let inconsistentNames = 0
-  for (const hashes of byName.values()) if (hashes.size > 1) inconsistentNames++
+  for (const sizes of byName.values()) if (sizeClusters(sizes).length > 1) inconsistentNames++
   return { total: meta.length, inconsistentNames }
 }
 

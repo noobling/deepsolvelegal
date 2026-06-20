@@ -1,5 +1,4 @@
 import { promises as fs } from 'fs'
-import { createHash } from 'crypto'
 import path from 'path'
 import { simpleParser, type ParsedMail } from 'mailparser'
 import type { Collection, IndexedDoc, IndexEvent, ProcessFeatures, ProductionResult } from '@shared/types'
@@ -17,10 +16,9 @@ import {
   loadFileRows,
   productionTargets,
   excludedSummary,
+  sameApproxSize,
   type ProdRecord
 } from './productionRows'
-
-const sha1 = (buf: Buffer): string => createHash('sha1').update(buf).digest('hex')
 
 // Turn an indexed document set into a single Bates-numbered production under the
 // output folder, then write the deliverables the enabled features ask for:
@@ -39,11 +37,10 @@ const PAD = 6
 
 const addr = (v: ParsedMail['to']): string => (Array.isArray(v) ? v.map((t) => t.text).join('; ') : v?.text) || ''
 
-/** Filename + size + content hash of an excluded attachment (no content). */
+/** Filename + size of an excluded attachment (no content). */
 interface ExcludedMeta {
   name: string
   size: number
-  hash: string
 }
 
 /** A produced document remembered across runs: its row data + input file state. */
@@ -155,7 +152,7 @@ async function produceOne(
     if (opts.combine && built.fileAttachments.length) pdf = await combineFamily(pdf, built.fileAttachments)
     // Excluded-by-filename attachments are routed to Excluded/, not the family folder.
     for (const a of built.excludedAttachments) {
-      const meta: ExcludedMeta = { name: a.filename || 'attachment', size: a.content.length, hash: sha1(a.content) }
+      const meta: ExcludedMeta = { name: a.filename || 'attachment', size: a.content.length }
       excludedMeta.push(meta)
       excludedSink.push({ ...meta, content: a.content, source: rel })
     }
@@ -246,12 +243,26 @@ async function produceOne(
 }
 
 /**
- * Write excluded attachments to <output>/Excluded/ for review. Byte-identical
- * copies of a filename (same content hash) collapse to one representative; a
- * filename with two or more DISTINCT contents has each variant written to
- * Excluded/Needs Review/<name>/ — one of them might be a real document misnamed
- * like the boilerplate. A listing spreadsheet records the details. Called only on
- * a full render, when every excluded attachment's content is in hand.
+ * Group same-named excluded attachments into size clusters (copies within ±2% are
+ * the same document — exact bytes needn't match). One cluster ⇒ consistent.
+ */
+function clusterBySize(items: ExcludedAtt[]): ExcludedAtt[][] {
+  const clusters: ExcludedAtt[][] = []
+  for (const it of [...items].sort((a, b) => a.size - b.size)) {
+    const last = clusters[clusters.length - 1]
+    if (last && sameApproxSize(last[last.length - 1].size, it.size)) last.push(it)
+    else clusters.push([it])
+  }
+  return clusters
+}
+
+/**
+ * Write excluded attachments to <output>/Excluded/ for review. Copies of a filename
+ * whose sizes cluster together (within ±2%) collapse to one representative; a
+ * filename whose copies split into two or more size clusters has one representative
+ * per cluster written to Excluded/Needs Review/<name>/ — one of them might be a real
+ * document misnamed like the boilerplate. A listing spreadsheet records the details.
+ * Called only on a full render, when every excluded attachment's content is in hand.
  */
 async function writeExcludedFolder(outRoot: string, excluded: ExcludedAtt[]): Promise<void> {
   const dir = path.join(outRoot, 'Excluded')
@@ -268,7 +279,7 @@ async function writeExcludedFolder(outRoot: string, excluded: ExcludedAtt[]): Pr
   }
 
   // Never let two distinct files share an output path (odd characters in a
-  // filename, or two same-size variants) — disambiguate with a leading "_".
+  // filename, or two clusters with the same byte size) — disambiguate with a "_".
   const used = new Set<string>()
   const uniquePath = (folder: string, name: string): string => {
     let n = safeName(name)
@@ -276,28 +287,30 @@ async function writeExcludedFolder(outRoot: string, excluded: ExcludedAtt[]): Pr
     used.add(path.join(folder, n).toLowerCase())
     return path.join(folder, n)
   }
+  // The largest copy in a cluster is the most complete version to keep.
+  const rep = (cluster: ExcludedAtt[]): ExcludedAtt => cluster[cluster.length - 1]
 
-  const listing: string[][] = [['Filename', 'Copies', 'Distinct files', 'Sizes (bytes)', 'Consistent', 'From emails']]
+  const listing: string[][] = [['Filename', 'Copies', 'Distinct sizes', 'Sizes (bytes)', 'Consistent', 'From emails']]
   for (const items of groups.values()) {
-    const byHash = new Map<string, ExcludedAtt>()
-    for (const it of items) if (!byHash.has(it.hash)) byHash.set(it.hash, it)
-    const variants = [...byHash.values()]
-    if (variants.length === 1) {
-      await fs.writeFile(uniquePath(dir, items[0].name), variants[0].content)
+    const clusters = clusterBySize(items)
+    if (clusters.length === 1) {
+      const r = rep(clusters[0])
+      await fs.writeFile(uniquePath(dir, r.name), r.content)
     } else {
       const sub = path.join(dir, 'Needs Review', safeName(items[0].name))
       await fs.mkdir(sub, { recursive: true })
-      for (const v of variants) {
-        const ext = path.extname(v.name)
-        await fs.writeFile(uniquePath(sub, `${path.basename(v.name, ext)} (${v.size} bytes)${ext}`), v.content)
+      for (const cluster of clusters) {
+        const r = rep(cluster)
+        const ext = path.extname(r.name)
+        await fs.writeFile(uniquePath(sub, `${path.basename(r.name, ext)} (${r.size} bytes)${ext}`), r.content)
       }
     }
     listing.push([
       items[0].name,
       String(items.length),
-      String(variants.length),
+      String(clusters.length),
       [...new Set(items.map((i) => i.size))].sort((a, b) => a - b).join(', '),
-      variants.length === 1 ? 'yes' : 'NEEDS REVIEW',
+      clusters.length === 1 ? 'yes' : 'NEEDS REVIEW',
       [...new Set(items.map((i) => i.source))].join('; ')
     ])
   }
