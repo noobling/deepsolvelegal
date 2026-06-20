@@ -212,7 +212,7 @@ export async function convertEmailsToPdf(
     const eml = emls[idx]
     try {
       const mail = await simpleParser(await fs.readFile(eml))
-      const { html, fileAttachments } = buildEmailHtml(mail)
+      const { html, fileAttachments } = buildEmailHtml(mail, { excludeSignatures: options.excludeSignatures })
       let pdf = await renderInto(win, html)
 
       // Combine the family into one document (email + attachments) if requested.

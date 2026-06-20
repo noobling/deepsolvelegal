@@ -37,7 +37,7 @@ async function produceOne(
   doc: IndexedDoc,
   outRoot: string,
   rel: string,
-  opts: { combine: boolean; stamp: boolean; prefix: string; batesStart: number },
+  opts: { combine: boolean; stamp: boolean; prefix: string; batesStart: number; excludeSignatures: boolean },
   used: Set<string>,
   result: ProductionResult
 ): Promise<ProdRecord> {
@@ -61,7 +61,7 @@ async function produceOne(
 
   if (ext === '.eml') {
     const mail = await simpleParser(await fs.readFile(doc.path))
-    const built = buildEmailHtml(mail)
+    const built = buildEmailHtml(mail, { excludeSignatures: opts.excludeSignatures })
     pdf = await renderInto(win, built.html)
     if (opts.combine && built.fileAttachments.length) pdf = await combineFamily(pdf, built.fileAttachments)
     from = mail.from?.text || ''
@@ -184,7 +184,7 @@ export async function buildProduction(
       const doc = targets[i]
       emit({ type: 'index-progress', collectionId: collection.id, phase: 'Building production', done: i, total: targets.length })
       try {
-        const rec = await produceOne(win, doc, outRoot, relFor(doc.path), { combine: !!collection.combineAttachments, stamp: stampOn, prefix, batesStart: batesNext }, used, result)
+        const rec = await produceOne(win, doc, outRoot, relFor(doc.path), { combine: !!collection.combineAttachments, stamp: stampOn, prefix, batesStart: batesNext, excludeSignatures: !!collection.excludeSignatures }, used, result)
         records.push(rec)
         batesNext += rec.pages
         result.pdfCount++

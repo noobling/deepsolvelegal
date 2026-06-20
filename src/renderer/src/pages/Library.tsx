@@ -211,6 +211,7 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const [highlights, setHighlights] = useState(false)
   const [aiEnrich, setAiEnrich] = useState(false)
   const [combine, setCombine] = useState(true)
+  const [excludeSignatures, setExcludeSignatures] = useState(false)
   const [batesPrefix, setBatesPrefix] = useState('DOC-')
   const [batesStart, setBatesStart] = useState('1')
   const [busy, setBusy] = useState(false)
@@ -250,6 +251,7 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
       features,
       bates: wantsBates ? { prefix: batesPrefix, start: Math.max(1, parseInt(batesStart, 10) || 1) } : undefined,
       combineAttachments: combine,
+      excludeSignatures,
       aiEnrich
     })
     onClose()
@@ -344,6 +346,13 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
             <label className="flex items-center gap-2.5 cursor-pointer text-[12.5px] text-slate-300">
               <input type="checkbox" checked={combine} onChange={(e) => setCombine(e.target.checked)} className="accent-[#c9a24b]" />
               Combine each email + its attachments into one PDF
+            </label>
+            <label className="flex items-start gap-2.5 cursor-pointer text-[12.5px] text-slate-300">
+              <input type="checkbox" checked={excludeSignatures} onChange={(e) => setExcludeSignatures(e.target.checked)} className="mt-0.5 accent-[#c9a24b]" />
+              <span>
+                Exclude email signatures
+                <span className="text-ink-600"> · removes logos/icons + footer boilerplate (disclaimers, “Sent from my…”); keeps content photos &amp; text</span>
+              </span>
             </label>
             <div className="flex items-center gap-2 text-[12px]">
               <Hash className="w-3.5 h-3.5 text-ink-600" />

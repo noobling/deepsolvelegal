@@ -38,8 +38,78 @@ const CSS = `
   .dsl-atts .f { color: #515154; }
 `
 
-export function buildEmailHtml(mail: ParsedMail): { html: string; fileAttachments: Attachment[] } {
+/** Width/height from a PNG/GIF/JPEG buffer header, or null if not parseable. */
+function imageSize(buf: Buffer): { w: number; h: number } | null {
+  if (buf.length >= 24 && buf[0] === 0x89 && buf[1] === 0x50) {
+    return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) } // PNG
+  }
+  if (buf.length >= 10 && buf[0] === 0x47 && buf[1] === 0x49) {
+    return { w: buf.readUInt16LE(6), h: buf.readUInt16LE(8) } // GIF
+  }
+  if (buf.length >= 4 && buf[0] === 0xff && buf[1] === 0xd8) {
+    let i = 2 // JPEG: walk markers to the start-of-frame for dimensions
+    while (i + 9 < buf.length) {
+      if (buf[i] !== 0xff) {
+        i++
+        continue
+      }
+      const m = buf[i + 1]
+      if (m >= 0xc0 && m <= 0xc3) return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7) }
+      if (m === 0xd8 || m === 0xd9 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) {
+        i += 2
+        continue
+      }
+      i += 2 + buf.readUInt16BE(i + 2)
+    }
+  }
+  return null
+}
+
+/**
+ * Whether an inline image is a signature graphic (company logo, social icon) vs.
+ * content (a photo, screenshot, or floor plan — which must be preserved as it may
+ * be evidence). Signatures are small in BOTH bytes and pixels; anything sizeable
+ * in either is kept.
+ */
+export function isSignatureGraphic(buf?: Buffer, filename?: string): boolean {
+  if (!buf || !buf.length) return false
+  // Camera / screenshot / descriptive filenames are user content — never strip,
+  // even when small (a phone photo can be a small thumbnail). Outlook's generic
+  // "imageNNN" auto-name is NOT excluded here (it's used for both logos and
+  // pasted screenshots), so those fall through to the size checks below.
+  const name = (filename || '').toLowerCase()
+  if (/img[-_ ]?\d|dsc\d|screenshot|screen shot|photo|capture|whatsapp|\.heic|\d{8}/.test(name)) return false
+  const bytes = buf.length
+  if (bytes >= 150 * 1024) return false // clearly a photo
+  const d = imageSize(buf)
+  const maxDim = d ? Math.max(d.w, d.h) : null
+  if (maxDim != null && maxDim >= 800) return false // large dimensions → screenshot / diagram
+  // Small in bytes and pixels → a logo or social icon (a signature graphic).
+  if (bytes <= 40 * 1024) return true
+  return maxDim != null && maxDim <= 650 // a mid-size logo with small dimensions
+}
+
+/**
+ * Remove common footer boilerplate — confidentiality/privilege disclaimers,
+ * email-scan notices, and "Sent from my …" lines. Bounded + anchored on closing
+ * markers so it can't run away; the sender's name/contact and substantive text
+ * are left intact.
+ */
+export function stripBoilerplate(html: string): string {
+  return html
+    .replace(/Sent from my [^<\n]{0,40}/gi, '')
+    .replace(/_{6,}(?:\s|<[^>]+>)*This (?:e-?mail|message) has been scanned by[\s\S]{0,200}?(?:cloud service\.?|Symantec[^<.]*\.?)(?:\s|<[^>]+>)*_{6,}/gi, '')
+    .replace(/This (?:e-?mail|message) has been scanned by[\s\S]{0,160}?(?:cloud service\.?|Symantec[^<.]*\.?)/gi, '')
+    .replace(/The information contained in this (?:message|e-?mail)[\s\S]{0,700}?(?:\(IDSC\d+\)|delete the (?:message|e-?mail)\.?|strictly prohibited\.?)/gi, '')
+    .replace(/This (?:e-?mail|message)(?: and any (?:attachments?|files? transmitted with it))? (?:is|are) (?:strictly )?(?:confidential|intended)[\s\S]{0,700}?(?:delete[\s\S]{0,80}?\.|prohibited\.?|notify the sender[\s\S]{0,60}?\.)/gi, '')
+}
+
+export function buildEmailHtml(
+  mail: ParsedMail,
+  opts: { excludeSignatures?: boolean } = {}
+): { html: string; fileAttachments: Attachment[] } {
   const atts = (mail.attachments || []) as Attachment[]
+  const excludeSignatures = !!opts.excludeSignatures
   let body = typeof mail.html === 'string' && mail.html ? mail.html : mail.textAsHtml || '<p>(no message body)</p>'
 
   // Apple Mail interleaves several full <html>…</html> documents (one per inline
@@ -73,9 +143,15 @@ export function buildEmailHtml(mail: ParsedMail): { html: string; fileAttachment
   for (const cid of cidRefs) {
     const a = byId.get(cid) || orderMap.get(cid)
     if (a && a.contentType?.startsWith('image/')) {
-      // Inline image (e.g. signature logo): embed as a data URI.
       embedded.add(a)
-      body = body.split('cid:' + cid).join(`data:${a.contentType};base64,${a.content.toString('base64')}`)
+      if (excludeSignatures && isSignatureGraphic(a.content, a.filename)) {
+        // Drop signature logos / social icons entirely (content photos are kept).
+        body = body.replace(new RegExp('<img[^>]*cid:' + escRe(cid) + '[^>]*>', 'gi'), '')
+        body = body.split('cid:' + cid).join(TRANSPARENT_PX)
+      } else {
+        // Inline image: embed as a data URI.
+        body = body.split('cid:' + cid).join(`data:${a.contentType};base64,${a.content.toString('base64')}`)
+      }
     } else {
       // Non-image (e.g. an inline PDF preview) or unmatched cid: the original
       // <img> would render as a big blank box, so swap the whole tag for a small
@@ -83,6 +159,13 @@ export function buildEmailHtml(mail: ParsedMail): { html: string; fileAttachment
       body = body.replace(new RegExp('<img[^>]*cid:' + escRe(cid) + '[^>]*>', 'gi'), badge(a?.filename || 'attachment'))
       body = body.split('cid:' + cid).join(TRANSPARENT_PX) // any remaining bare refs
     }
+  }
+
+  if (excludeSignatures) {
+    body = stripBoilerplate(body)
+    // Tidy blocks the removals emptied out.
+    for (let i = 0; i < 2; i++) body = body.replace(/<div[^>]*>(?:\s|&nbsp;| |<br\b[^>]*\/?>)*<\/div>/gi, '')
+    body = body.replace(/(?:\s*<br\b[^>]*\/?>\s*){3,}/gi, '<br><br>')
   }
 
   const fileAttachments = atts.filter((a) => !embedded.has(a))

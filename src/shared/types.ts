@@ -293,6 +293,8 @@ export interface EmailToPdfOptions {
   index?: boolean
   /** Write an EXTERNAL production load file (.DAT + .CSV) for opposing counsel. */
   loadFile?: boolean
+  /** Drop signature graphics (logos/icons) + footer boilerplate when rendering. */
+  excludeSignatures?: boolean
 }
 
 export interface EmailToPdfResult {
@@ -370,6 +372,8 @@ export interface Collection {
   bates?: { prefix: string; start: number }
   /** Merge each email's attachments onto the end of its PDF. */
   combineAttachments?: boolean
+  /** Drop email signature graphics + footer boilerplate when rendering to PDF. */
+  excludeSignatures?: boolean
   /** Whether to enrich each doc with a Claude-generated summary/type/parties. */
   aiEnrich: boolean
   /** Production artifacts produced on the last run. */
@@ -431,6 +435,7 @@ export interface CreateCollectionInput {
   /** Bates numbering config (prefix + start). Defaults applied if omitted. */
   bates?: { prefix: string; start: number }
   combineAttachments?: boolean
+  excludeSignatures?: boolean
   aiEnrich: boolean
 }
 
