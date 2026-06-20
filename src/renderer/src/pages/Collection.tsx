@@ -279,12 +279,21 @@ function OutputsPanel({ c, indexing, paused }: { c: CollectionType; indexing: bo
   const sep = c.output?.includes('\\') ? '\\' : '/'
   const outPath = (...parts: string[]): string | undefined => (c.output ? [c.output, ...parts].join(sep) : undefined)
 
+  // "Convert to PDF" off → documents are copied as originals (native production).
+  const native = !!c.features && !c.features.emailToPdf
+  const n = p?.pdfCount ?? 0
   const artifacts: { show: boolean; icon: JSX.Element; label: string; sub: string; path?: string }[] = [
     {
-      show: !!p && p.pdfCount > 0,
+      show: !!p && n > 0,
       icon: <FileStack className="w-4 h-4 text-accent" />,
-      label: `${p?.pdfCount ?? 0} PDF${p?.pdfCount === 1 ? '' : 's'} in Documents/`,
-      sub: p?.batesRange ? `Bates ${p.batesRange.begin}–${p.batesRange.end}` : 'rendered & Bates-stamped'
+      label: native
+        ? `${n} document${n === 1 ? '' : 's'} copied (native) in Documents/`
+        : `${n} PDF${n === 1 ? '' : 's'} in Documents/`,
+      sub: p?.batesRange
+        ? `Bates ${p.batesRange.begin}–${p.batesRange.end}${native ? ' · originals kept' : ''}`
+        : native
+          ? 'originals copied as-is'
+          : 'rendered & Bates-stamped'
     },
     { show: !!p?.indexPath, icon: <FileSpreadsheet className="w-4 h-4 text-accent" />, label: 'Review index', sub: rel(p?.indexPath), path: p?.indexPath },
     { show: !!p?.loadFilePath, icon: <Send className="w-4 h-4 text-accent" />, label: 'Production load file', sub: rel(p?.loadFilePath) + ' + .csv', path: p?.loadFilePath },

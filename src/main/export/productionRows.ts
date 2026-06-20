@@ -7,7 +7,10 @@ import type { IndexedDoc } from '@shared/types'
 export interface ProdRecord {
   begBates: string
   endBates: string
+  /** Pages in the produced PDF; 0 for a native (not page-stamped) document. */
   pages: number
+  /** Bates numbers this document consumes: pages for a PDF, 1 for a native copy. */
+  batesSpan: number
   date: string
   from: string
   to: string
@@ -104,8 +107,9 @@ export function excludedSummary(meta: { name: string; hash: string }[]): { total
 }
 
 /**
- * Which documents to render: a review index or a production renders every doc so
- * it can carry a Bates number; "email→PDF" alone renders just the emails.
+ * Which documents go into the production: a review index or a production includes
+ * every doc so it can carry a Bates number (rendered to PDF, or copied as a native
+ * when "Convert to PDF" is off); "email→PDF" alone produces just the emails.
  */
 export function productionTargets<T extends { kind: 'email' | 'doc' }>(
   docs: T[],

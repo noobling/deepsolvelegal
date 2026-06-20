@@ -27,8 +27,11 @@ const sha1 = (buf: Buffer): string => createHash('sha1').update(buf).digest('hex
 //   - review index (xlsx)                       → features.reviewIndex
 //   - production load file (.DAT/.CSV)          → features.loadFile
 //   - highlights table (xlsx)                  → features.highlights
-// A full production (internal/external index) renders EVERY document to PDF so it
-// can carry a Bates number; "convert emails to PDF" alone renders just the emails.
+// A full production (internal/external index) includes EVERY document so it can
+// carry a Bates number. With "Convert to PDF" on, each document is rendered to a
+// Bates-stamped PDF; with it off, the original native is copied over and given a
+// single document-level Bates number (the index/load-file references the native).
+// "Convert to PDF" alone (no index) produces just the emails.
 
 type Emit = (e: IndexEvent) => void
 
@@ -66,7 +69,7 @@ async function produceOne(
   doc: IndexedDoc,
   outRoot: string,
   rel: string,
-  opts: { combine: boolean; stamp: boolean; prefix: string; batesStart: number; excludeSignatures: boolean; excludeAttachments: string[] },
+  opts: { convert: boolean; combine: boolean; assignBates: boolean; prefix: string; batesStart: number; excludeSignatures: boolean; excludeAttachments: string[] },
   used: Set<string>,
   result: ProductionResult,
   excludedSink: ExcludedAtt[]
@@ -77,8 +80,63 @@ async function produceOne(
   // Produced files live under Documents/ so they never mix with the metadata
   // (review index, load file, highlights), which go in their own folders.
   const docsRoot = path.join(outRoot, 'Documents')
+  const batesLabel = (n: number): string => opts.prefix + String(n).padStart(PAD, '0')
 
   const excludedMeta: ExcludedMeta[] = []
+
+  // Native production ("Convert to PDF" off): copy the original file verbatim and
+  // give it ONE document-level Bates number (a native can't be page-stamped), then
+  // let the index/load-file reference it. Render-time filtering (signatures,
+  // excluded attachments) doesn't apply here — the original is kept intact.
+  if (!opts.convert) {
+    let from = ''
+    let to = ''
+    let cc = ''
+    let subject = ''
+    let date = ''
+    let attCount = 0
+    let attNames = ''
+    if (ext === '.eml') {
+      const mail = await simpleParser(await fs.readFile(doc.path))
+      from = mail.from?.text || ''
+      to = addr(mail.to)
+      cc = addr(mail.cc)
+      subject = mail.subject || ''
+      date = mail.date ? mail.date.toISOString().slice(0, 10) : ''
+      const atts = (mail.attachments || []).filter((a) => a.contentDisposition === 'attachment')
+      attCount = atts.length
+      attNames = atts.map((a) => a.filename || 'attachment').join('; ')
+    } else {
+      subject = doc.title || base
+      date = doc.date || ''
+    }
+    const folder = path.join(docsRoot, relDir)
+    await fs.mkdir(folder, { recursive: true })
+    let name = safeName(doc.name)
+    while (used.has(path.join(folder, name).toLowerCase())) name = '_' + name
+    used.add(path.join(folder, name).toLowerCase())
+    const outPath = path.join(folder, name)
+    await fs.copyFile(doc.path, outPath)
+    const beg = opts.assignBates ? batesLabel(opts.batesStart) : ''
+    const rec: ProdRecord = {
+      begBates: beg,
+      endBates: beg,
+      pages: 0,
+      batesSpan: 1,
+      date,
+      from,
+      to,
+      cc,
+      subject,
+      docType: doc.docType || (doc.kind === 'email' ? 'Email' : 'Document'),
+      kind: doc.kind,
+      fileRel: path.relative(outRoot, outPath),
+      attCount,
+      attNames
+    }
+    return { rec, excludedMeta }
+  }
+
   let pdf: Buffer
   let from = ''
   let to = ''
@@ -133,7 +191,7 @@ async function produceOne(
   let pages = 0
   let begBates = ''
   let endBates = ''
-  if (opts.stamp) {
+  if (opts.assignBates) {
     try {
       const s = await stampBates(pdf, opts.batesStart, opts.prefix, PAD)
       pdf = s.bytes
@@ -172,6 +230,7 @@ async function produceOne(
     begBates,
     endBates,
     pages,
+    batesSpan: pages,
     date,
     from,
     to,
@@ -258,13 +317,15 @@ export async function buildProduction(
   const excludeAttachments = collection.excludeAttachments ?? []
   await fs.mkdir(outRoot, { recursive: true })
 
-  // A review index or production renders every doc; "email→PDF" alone renders just emails.
+  // A review index or production includes every doc; "convert to PDF" alone produces
+  // just emails. With convert off, documents are copied as natives instead of rendered.
   const fullProduction = features.reviewIndex || features.loadFile
+  const convert = features.emailToPdf
   const targets = productionTargets(docs, features).sort((a, b) => a.path.localeCompare(b.path)) // deterministic, contiguous Bates
 
   // A review index / production needs Bates; default a prefix if the user didn't set one.
   const bates = collection.bates ?? (fullProduction ? { prefix: 'DOC-', start: 1 } : null)
-  const stampOn = !!bates
+  const assignBates = !!bates
   const prefix = bates?.prefix ?? ''
   let batesNext = bates?.start ?? 1
   const label = (n: number): string => prefix + String(n).padStart(PAD, '0')
@@ -315,19 +376,19 @@ export async function buildProduction(
       emit({ type: 'index-progress', collectionId: collection.id, phase: 'Building production', done: i, total: targets.length })
       const prev = prevById.get(doc.id)
       const unchanged = !!prev && prev.mtime === doc.modifiedAt && prev.size === doc.size
-      const batesStable = !stampOn || (prev != null && prev.begBates === label(batesNext))
+      const batesStable = !assignBates || (prev != null && prev.begBates === label(batesNext))
       if (unchanged && prev && batesStable && (await outputExists(prev.fileRel))) {
-        items.push(prev) // reuse the already-produced PDF + its Bates
+        items.push(prev) // reuse the already-produced document + its Bates
         used.add(path.join(outRoot, prev.fileRel).toLowerCase())
-        batesNext += prev.pages
+        batesNext += prev.batesSpan ?? prev.pages
         result.skipped++
         result.pdfCount++
         continue
       }
       try {
-        const { rec, excludedMeta } = await produceOne(win, doc, outRoot, relFor(doc.path), { combine: !!collection.combineAttachments, stamp: stampOn, prefix, batesStart: batesNext, excludeSignatures: !!collection.excludeSignatures, excludeAttachments }, used, result, excludedSink)
+        const { rec, excludedMeta } = await produceOne(win, doc, outRoot, relFor(doc.path), { convert, combine: !!collection.combineAttachments, assignBates, prefix, batesStart: batesNext, excludeSignatures: !!collection.excludeSignatures, excludeAttachments }, used, result, excludedSink)
         items.push({ id: doc.id, path: doc.path, mtime: doc.modifiedAt, size: doc.size, excluded: excludedMeta, ...rec })
-        batesNext += rec.pages
+        batesNext += rec.batesSpan
         result.processed++
         result.pdfCount++
       } catch (e) {
@@ -357,7 +418,7 @@ export async function buildProduction(
   if (isCancelled()) return result
 
   const records: ProdRecord[] = items
-  if (stampOn && records.length) {
+  if (assignBates && records.length) {
     const first = records.find((r) => r.begBates)
     const last = [...records].reverse().find((r) => r.endBates)
     if (first && last) result.batesRange = { begin: first.begBates, end: last.endBates }
