@@ -229,18 +229,19 @@ export default function Collection(): JSX.Element {
 function OutputsPanel({ c, indexing }: { c: CollectionType; indexing: boolean }): JSX.Element {
   const p = c.production
   const reveal = (path: string): void => void window.api.files.reveal(path)
-  const base = (path?: string): string => (path ? path.split(/[\\/]/).pop() || path : '')
+  // Show the folder + filename (e.g. "Reports/Review Index.xlsx") so the layout is clear.
+  const rel = (path?: string): string => (path ? path.split(/[\\/]/).slice(-2).join('/') : '')
 
   const artifacts: { show: boolean; icon: JSX.Element; label: string; sub: string; path?: string }[] = [
     {
       show: !!p && p.pdfCount > 0,
       icon: <FileStack className="w-4 h-4 text-accent" />,
-      label: `${p?.pdfCount ?? 0} PDF${p?.pdfCount === 1 ? '' : 's'} produced`,
-      sub: p?.batesRange ? `Bates ${p.batesRange.begin}–${p.batesRange.end}` : 'rendered to the output folder'
+      label: `${p?.pdfCount ?? 0} PDF${p?.pdfCount === 1 ? '' : 's'} in Documents/`,
+      sub: p?.batesRange ? `Bates ${p.batesRange.begin}–${p.batesRange.end}` : 'rendered & Bates-stamped'
     },
-    { show: !!p?.indexPath, icon: <FileSpreadsheet className="w-4 h-4 text-accent" />, label: 'Review index', sub: base(p?.indexPath), path: p?.indexPath },
-    { show: !!p?.loadFilePath, icon: <Send className="w-4 h-4 text-accent" />, label: 'Production load file', sub: base(p?.loadFilePath) + ' + .csv', path: p?.loadFilePath },
-    { show: !!p?.highlightsPath, icon: <Highlighter className="w-4 h-4 text-accent" />, label: 'Highlights table', sub: base(p?.highlightsPath), path: p?.highlightsPath }
+    { show: !!p?.indexPath, icon: <FileSpreadsheet className="w-4 h-4 text-accent" />, label: 'Review index', sub: rel(p?.indexPath), path: p?.indexPath },
+    { show: !!p?.loadFilePath, icon: <Send className="w-4 h-4 text-accent" />, label: 'Production load file', sub: rel(p?.loadFilePath) + ' + .csv', path: p?.loadFilePath },
+    { show: !!p?.highlightsPath, icon: <Highlighter className="w-4 h-4 text-accent" />, label: 'Highlights table', sub: rel(p?.highlightsPath), path: p?.highlightsPath }
   ]
   const shown = artifacts.filter((a) => a.show)
 

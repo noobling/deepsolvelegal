@@ -44,6 +44,9 @@ async function produceOne(
   const ext = doc.ext
   const base = path.basename(doc.name, ext)
   const relDir = path.dirname(rel) === '.' ? '' : path.dirname(rel)
+  // Produced files live under Documents/ so they never mix with the metadata
+  // (review index, load file, highlights), which go in their own folders.
+  const docsRoot = path.join(outRoot, 'Documents')
 
   let pdf: Buffer
   let from = ''
@@ -70,11 +73,11 @@ async function produceOne(
     attNames = built.fileAttachments.map((a) => a.filename || 'attachment').join('; ')
     for (const a of built.fileAttachments) attachments.push({ name: a.filename || 'attachment', content: a.content })
     // An email with attachments gets its own folder (PDF + native files together).
-    folder = attCount > 0 ? path.join(outRoot, relDir, base) : path.join(outRoot, relDir)
+    folder = attCount > 0 ? path.join(docsRoot, relDir, base) : path.join(docsRoot, relDir)
   } else {
     subject = doc.title || base
     date = doc.date || ''
-    folder = path.join(outRoot, relDir)
+    folder = path.join(docsRoot, relDir)
     let rendered = await renderDocToPdf(win, doc.path)
     if (!rendered) {
       rendered = await slipSheet(doc.name)
@@ -200,19 +203,27 @@ export async function buildProduction(
     if (first && last) result.batesRange = { begin: first.begBates, end: last.endBates }
   }
 
+  // Metadata is kept out of the Documents/ tree: review reports → Reports/, the
+  // production load file → Load Files/. Its FILE NAME paths stay relative to the
+  // output root (Documents/…) — the volume-root convention review platforms use.
+  const reportsDir = path.join(outRoot, 'Reports')
+  const loadFilesDir = path.join(outRoot, 'Load Files')
+
   // Review index — human-readable, for your own review team (internal).
   if (features.reviewIndex && records.length) {
-    const p = path.join(outRoot, 'Review Index.xlsx')
+    await fs.mkdir(reportsDir, { recursive: true })
+    const p = path.join(reportsDir, 'Review Index.xlsx')
     await fs.writeFile(p, await rowsToXlsx([REVIEW_HEADER, ...reviewIndexRows(records)], 'Review Index'))
     result.indexPath = p
   }
 
   // Production load file — Concordance .DAT + universal .CSV, with family ranges (external).
   if (features.loadFile && records.length) {
+    await fs.mkdir(loadFilesDir, { recursive: true })
     const table = [LOADFILE_HEADER, ...loadFileRows(records)]
-    const datPath = path.join(outRoot, 'Production Load File.dat')
+    const datPath = path.join(loadFilesDir, 'Production Load File.dat')
     await fs.writeFile(datPath, toDat(table))
-    await fs.writeFile(path.join(outRoot, 'Production Load File.csv'), toCsv(table))
+    await fs.writeFile(path.join(loadFilesDir, 'Production Load File.csv'), toCsv(table))
     result.loadFilePath = datPath
   }
 
@@ -220,7 +231,8 @@ export async function buildProduction(
   if (features.highlights) {
     const hrows = highlightRows(docs)
     if (hrows.length) {
-      const p = path.join(outRoot, 'Highlights.xlsx')
+      await fs.mkdir(reportsDir, { recursive: true })
+      const p = path.join(reportsDir, 'Highlights.xlsx')
       await fs.writeFile(p, await rowsToXlsx([HIGHLIGHT_HEADER, ...hrows], 'Highlights'))
       result.highlightsPath = p
     }
