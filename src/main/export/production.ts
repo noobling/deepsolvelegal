@@ -66,7 +66,7 @@ async function produceOne(
   doc: IndexedDoc,
   outRoot: string,
   rel: string,
-  opts: { convert: boolean; combine: boolean; assignBates: boolean; prefix: string; batesStart: number; excludeSignatures: boolean; excludeAttachments: string[] },
+  opts: { convert: boolean; combine: boolean; assignBates: boolean; prefix: string; batesStart: number; excludeSignatures: boolean; excludeAttachments: string[]; excludeUnderBytes: number },
   used: Set<string>,
   result: ProductionResult,
   excludedSink: ExcludedAtt[]
@@ -147,7 +147,7 @@ async function produceOne(
 
   if (ext === '.eml') {
     const mail = await simpleParser(await fs.readFile(doc.path))
-    const built = buildEmailHtml(mail, { excludeSignatures: opts.excludeSignatures, excludeAttachments: opts.excludeAttachments })
+    const built = buildEmailHtml(mail, { excludeSignatures: opts.excludeSignatures, excludeAttachments: opts.excludeAttachments, excludeUnderBytes: opts.excludeUnderBytes })
     pdf = await renderInto(win, built.html)
     if (opts.combine && built.fileAttachments.length) pdf = await combineFamily(pdf, built.fileAttachments)
     // Excluded-by-filename attachments are routed to Excluded/, not the family folder.
@@ -328,6 +328,7 @@ export async function buildProduction(
   const outRoot = path.resolve(collection.output as string)
   const result: ProductionResult = { pdfCount: 0, processed: 0, skipped: 0, removed: 0, slipSheets: 0, excludedAttachments: 0, inconsistentAttachments: 0, errors: [] }
   const excludeAttachments = collection.excludeAttachments ?? []
+  const excludeUnderBytes = Math.max(0, Math.floor((collection.excludeAttachmentsUnderKb ?? 0) * 1024))
   await fs.mkdir(outRoot, { recursive: true })
 
   // A review index or production includes every doc; "convert to PDF" alone produces
@@ -359,6 +360,7 @@ export async function buildProduction(
     combine: !!collection.combineAttachments,
     excludeSignatures: !!collection.excludeSignatures,
     excludeAttachments: [...excludeAttachments].map((s) => s.trim().toLowerCase()).sort(),
+    excludeUnderBytes,
     bates: collection.bates ?? null,
     emailToPdf: features.emailToPdf,
     reviewIndex: features.reviewIndex,
@@ -399,7 +401,7 @@ export async function buildProduction(
         continue
       }
       try {
-        const { rec, excludedMeta } = await produceOne(win, doc, outRoot, relFor(doc.path), { convert, combine: !!collection.combineAttachments, assignBates, prefix, batesStart: batesNext, excludeSignatures: !!collection.excludeSignatures, excludeAttachments }, used, result, excludedSink)
+        const { rec, excludedMeta } = await produceOne(win, doc, outRoot, relFor(doc.path), { convert, combine: !!collection.combineAttachments, assignBates, prefix, batesStart: batesNext, excludeSignatures: !!collection.excludeSignatures, excludeAttachments, excludeUnderBytes }, used, result, excludedSink)
         items.push({ id: doc.id, path: doc.path, mtime: doc.modifiedAt, size: doc.size, excluded: excludedMeta, ...rec })
         batesNext += rec.batesSpan
         result.processed++

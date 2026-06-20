@@ -281,6 +281,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       combineAttachments: input.combineAttachments,
       excludeSignatures: input.excludeSignatures,
       excludeAttachments: input.excludeAttachments,
+      excludeAttachmentsUnderKb: input.excludeAttachmentsUnderKb,
       aiEnrich: !!(input.aiEnrich || features?.aiEnrich)
     }
     await saveCollection(c)

@@ -15,6 +15,12 @@ const mod = new Module('productionRows')
 mod._compile(code, SRC)
 const m = mod.exports
 
+// emailHtml.ts is likewise type-only at runtime — load it the same way.
+const EH = path.join(__dirname, '..', 'src', 'main', 'export', 'emailHtml.ts')
+const ehMod = new Module('emailHtml')
+ehMod._compile(esbuild.transformSync(fs.readFileSync(EH, 'utf8'), { loader: 'ts', format: 'cjs' }).code, EH)
+const eh = ehMod.exports
+
 let ok = true
 const check = (name, cond) => {
   console.log((cond ? '  ✓ ' : '  ✗ ') + name)
@@ -81,6 +87,18 @@ check('clearly different sizes → flagged', es([{ name: 'proposal.pdf', size: 4
 check('grouping is case-insensitive', es([{ name: 'A.PDF', size: 1000 }, { name: 'a.pdf', size: 9000 }]).inconsistentNames === 1)
 check('total counts every copy', es([{ name: 'a', size: 1 }, { name: 'a', size: 1 }, { name: 'b', size: 2 }]).total === 3)
 check('empty → zero', es([]).total === 0 && es([]).inconsistentNames === 0)
+
+console.log('isInsignificantAttachment (auto logo + small-file removal):')
+const ins = eh.isInsignificantAttachment
+const att = (bytes, contentType, filename) => ({ content: Buffer.alloc(bytes), contentType, filename })
+check('file under threshold → set aside', ins(att(5 * 1024, 'application/pdf', 'x.pdf'), { underBytes: 10 * 1024 }) === true)
+check('file over threshold → kept', ins(att(50 * 1024, 'application/pdf', 'x.pdf'), { underBytes: 10 * 1024 }) === false)
+check('no threshold, non-image → kept', ins(att(1024, 'application/pdf', 'x.pdf'), {}) === false)
+check('small logo image + excludeSignatures → set aside', ins(att(8 * 1024, 'image/png', 'logo.png'), { excludeSignatures: true }) === true)
+check('small logo image without excludeSignatures → kept', ins(att(8 * 1024, 'image/png', 'logo.png'), {}) === false)
+check('screenshot filename protected even if small', ins(att(8 * 1024, 'image/png', 'screenshot-1.png'), { excludeSignatures: true }) === false)
+check('large image kept (content photo)', ins(att(200 * 1024, 'image/png', 'banner.png'), { excludeSignatures: true }) === false)
+check('non-image small file ignored by signature filter', ins(att(8 * 1024, 'application/pdf', 'tiny.pdf'), { excludeSignatures: true }) === false)
 
 console.log('\n' + (ok ? 'ALL PASS ✓' : 'FAILURES ✗'))
 process.exit(ok ? 0 : 1)

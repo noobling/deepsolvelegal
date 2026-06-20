@@ -234,6 +234,7 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const [combine, setCombine] = useState(true)
   const [excludeSignatures, setExcludeSignatures] = useState(false)
   const [excludeAttachmentsText, setExcludeAttachmentsText] = useState('')
+  const [excludeUnderKbText, setExcludeUnderKbText] = useState('')
   const [batesPrefix, setBatesPrefix] = useState('DOC-')
   const [batesStart, setBatesStart] = useState('1')
   const [busy, setBusy] = useState(false)
@@ -278,6 +279,7 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
         .split('\n')
         .map((s) => s.trim())
         .filter(Boolean),
+      excludeAttachmentsUnderKb: Math.max(0, parseInt(excludeUnderKbText, 10) || 0),
       aiEnrich
     })
     onClose()
@@ -380,8 +382,8 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
             <label className="flex items-start gap-2.5 cursor-pointer text-[12.5px] text-slate-300">
               <input type="checkbox" checked={excludeSignatures} onChange={(e) => setExcludeSignatures(e.target.checked)} className="mt-0.5 accent-[#c9a24b]" />
               <span>
-                Exclude email signatures
-                <span className="text-ink-600"> · removes logos/icons + footer boilerplate (disclaimers, “Sent from my…”); keeps content photos &amp; text</span>
+                Exclude email signatures &amp; logos
+                <span className="text-ink-600"> · removes logo/icon images (inline <span className="text-slate-400">and</span> as attachments) + footer boilerplate; keeps content photos &amp; text</span>
               </span>
             </label>
             <div>
@@ -400,6 +402,16 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
                 Excluded files go to an <span className="text-slate-400">Excluded/</span> folder; copies of one name with different sizes are flagged in <span className="text-slate-400">Needs Review</span>.
               </div>
             </div>
+            <label className="flex items-center gap-2 text-[12.5px] text-slate-300">
+              <span>Also set aside attachments under</span>
+              <input
+                value={excludeUnderKbText}
+                onChange={(e) => setExcludeUnderKbText(e.target.value.replace(/[^0-9]/g, ''))}
+                placeholder="e.g. 10"
+                className="w-16 bg-ink-950 border border-ink-700 rounded px-2 py-1 text-slate-200 outline-none focus:border-accent/60"
+              />
+              <span className="text-ink-600">KB — small files are likely logos/icons, not real documents (still kept in Excluded/ to double-check)</span>
+            </label>
             <div className="flex items-center gap-2 text-[12px]">
               <Hash className="w-3.5 h-3.5 text-ink-600" />
               <span className="text-ink-600">Bates prefix</span>

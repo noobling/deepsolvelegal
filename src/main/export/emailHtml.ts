@@ -90,6 +90,25 @@ export function isSignatureGraphic(buf?: Buffer, filename?: string): boolean {
 }
 
 /**
+ * Whether a file attachment is likely non-substantive and can be set aside for
+ * review (Excluded/) rather than produced. Two signals, both opt-in:
+ *  - a logo/icon image (small in bytes AND pixels) when excludeSignatures is on —
+ *    reuses the inline-image heuristic, so photos/screenshots are still kept;
+ *  - any file smaller than `underBytes` (the user's "small ⇒ probably not important"
+ *    threshold), regardless of type.
+ * Excluding only sets a file aside for review — it is never deleted.
+ */
+export function isInsignificantAttachment(
+  a: Attachment,
+  opts: { excludeSignatures?: boolean; underBytes?: number }
+): boolean {
+  const size = a.content?.length || 0
+  if (opts.underBytes && size > 0 && size < opts.underBytes) return true
+  if (opts.excludeSignatures && a.contentType?.startsWith('image/') && isSignatureGraphic(a.content, a.filename)) return true
+  return false
+}
+
+/**
  * Remove common footer boilerplate — confidentiality/privilege disclaimers,
  * email-scan notices, and "Sent from my …" lines. Bounded + anchored on closing
  * markers so it can't run away; the sender's name/contact and substantive text
@@ -106,10 +125,11 @@ export function stripBoilerplate(html: string): string {
 
 export function buildEmailHtml(
   mail: ParsedMail,
-  opts: { excludeSignatures?: boolean; excludeAttachments?: string[] } = {}
+  opts: { excludeSignatures?: boolean; excludeAttachments?: string[]; excludeUnderBytes?: number } = {}
 ): { html: string; fileAttachments: Attachment[]; excludedAttachments: Attachment[] } {
   const atts = (mail.attachments || []) as Attachment[]
   const excludeSignatures = !!opts.excludeSignatures
+  const excludeUnderBytes = opts.excludeUnderBytes || 0
   const excludeNames = new Set((opts.excludeAttachments || []).map((s) => s.trim().toLowerCase()).filter(Boolean))
   let body = typeof mail.html === 'string' && mail.html ? mail.html : mail.textAsHtml || '<p>(no message body)</p>'
 
@@ -169,11 +189,14 @@ export function buildEmailHtml(
     body = body.replace(/(?:\s*<br\b[^>]*\/?>\s*){3,}/gi, '<br><br>')
   }
 
-  // Attachments not embedded inline, split into kept vs. excluded-by-filename.
+  // Attachments not embedded inline, split into kept vs. set-aside: excluded by
+  // filename, or auto-detected as insignificant (a logo/icon, or a tiny file).
   const allAttachments = atts.filter((a) => !embedded.has(a))
-  const isExcluded = (a: Attachment): boolean => excludeNames.has((a.filename || '').trim().toLowerCase())
-  const excludedAttachments = excludeNames.size ? allAttachments.filter(isExcluded) : []
-  const fileAttachments = excludeNames.size ? allAttachments.filter((a) => !isExcluded(a)) : allAttachments
+  const isExcluded = (a: Attachment): boolean =>
+    excludeNames.has((a.filename || '').trim().toLowerCase()) ||
+    isInsignificantAttachment(a, { excludeSignatures, underBytes: excludeUnderBytes })
+  const excludedAttachments = allAttachments.filter(isExcluded)
+  const fileAttachments = allAttachments.filter((a) => !isExcluded(a))
 
   const addrText = (v: ParsedMail['to']): string =>
     (Array.isArray(v) ? v.map((t) => t.text).join(', ') : v?.text) || ''

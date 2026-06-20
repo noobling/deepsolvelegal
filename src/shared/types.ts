@@ -382,10 +382,14 @@ export interface Collection {
   bates?: { prefix: string; start: number }
   /** Merge each email's attachments onto the end of its PDF. */
   combineAttachments?: boolean
-  /** Drop email signature graphics + footer boilerplate when rendering to PDF. */
+  /** Drop email signature graphics + footer boilerplate when rendering to PDF;
+   *  also sets aside logo/icon attachments (small images) to Excluded/. */
   excludeSignatures?: boolean
   /** Attachment filenames to exclude from the production (routed to Excluded/). */
   excludeAttachments?: string[]
+  /** Set aside attachments smaller than this many KB as likely-insignificant
+   *  (logos/icons/tiny files) → Excluded/. 0/undefined disables the size filter. */
+  excludeAttachmentsUnderKb?: number
   /** Whether to enrich each doc with a Claude-generated summary/type/parties. */
   aiEnrich: boolean
   /** Production artifacts produced on the last run. */
@@ -449,6 +453,7 @@ export interface CreateCollectionInput {
   combineAttachments?: boolean
   excludeSignatures?: boolean
   excludeAttachments?: string[]
+  excludeAttachmentsUnderKb?: number
   aiEnrich: boolean
 }
 
