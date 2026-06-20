@@ -28,17 +28,18 @@ const recs = [
 
 console.log('productionTargets (render scope):')
 const docs = [{ kind: 'email' }, { kind: 'doc' }, { kind: 'email' }]
-check('email→PDF only renders just emails', m.productionTargets(docs, { emailToPdf: true, internalIndex: false, externalIndex: false }).length === 2)
-check('internal index renders the whole set', m.productionTargets(docs, { emailToPdf: false, internalIndex: true, externalIndex: false }).length === 3)
-check('external index renders the whole set', m.productionTargets(docs, { emailToPdf: false, internalIndex: false, externalIndex: true }).length === 3)
-check('nothing selected renders nothing', m.productionTargets(docs, { emailToPdf: false, internalIndex: false, externalIndex: false }).length === 0)
+check('email→PDF only renders just emails', m.productionTargets(docs, { emailToPdf: true, reviewIndex: false, loadFile: false }).length === 2)
+check('review index renders the whole set', m.productionTargets(docs, { emailToPdf: false, reviewIndex: true, loadFile: false }).length === 3)
+check('production (load file) renders the whole set', m.productionTargets(docs, { emailToPdf: false, reviewIndex: false, loadFile: true }).length === 3)
+check('nothing selected renders nothing', m.productionTargets(docs, { emailToPdf: false, reviewIndex: false, loadFile: false }).length === 0)
 
-console.log('internal index:')
-const ir = m.internalIndexRows(recs)
-check('header has 10 cols', m.INTERNAL_HEADER.length === 10)
+console.log('review index:')
+const ir = m.reviewIndexRows(recs)
+check('header has 10 cols', m.REVIEW_HEADER.length === 10)
+check('header uses "Beginning/Ending Bates"', m.REVIEW_HEADER[0] === 'Beginning Bates' && m.REVIEW_HEADER[1] === 'Ending Bates')
 check('row width matches header', ir[0].length === 10)
 check('Bates begin/end in cols 0,1', ir[0][0] === 'DOC-000001' && ir[0][1] === 'DOC-000004')
-check('pages blank when 0', m.internalIndexRows([{ ...recs[1], pages: 0 }])[0][2] === '')
+check('pages blank when 0', m.reviewIndexRows([{ ...recs[1], pages: 0 }])[0][2] === '')
 check('attachment count blank when 0', ir[1][9] === '')
 check('attachment count shown when >0', ir[0][9] === '2')
 

@@ -285,9 +285,9 @@ export async function convertEmailsToPdf(
     if (first && last) result.batesRange = { begin: first.begBates, end: last.endBates }
   }
 
-  // INTERNAL review index — human-readable spreadsheet for your own team.
+  // Review index — human-readable spreadsheet for your own review team (internal).
   if (options.index && records.length) {
-    const header = ['Bates Begin', 'Bates End', 'Pages', 'Date', 'From', 'To', 'Subject', '# Attachments', 'Attachments']
+    const header = ['Beginning Bates', 'Ending Bates', 'Pages', 'Date', 'From', 'To', 'Subject', '# Attachments', 'Attachments']
     const rows = records.map((r) => [
       r.begBates,
       r.endBates,
@@ -299,8 +299,8 @@ export async function convertEmailsToPdf(
       String(r.attCount),
       r.attNames
     ])
-    const buf = await rowsToXlsx([header, ...rows], 'Production Index')
-    const indexPath = path.join(outRoot, 'Production Index.xlsx')
+    const buf = await rowsToXlsx([header, ...rows], 'Review Index')
+    const indexPath = path.join(outRoot, 'Review Index.xlsx')
     await fs.writeFile(indexPath, buf)
     result.indexPath = indexPath
   }

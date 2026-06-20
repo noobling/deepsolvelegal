@@ -323,12 +323,12 @@ export type CollectionStatus = 'idle' | 'indexing' | 'ready' | 'error'
  * browsable + searchable); these add deliverables written to the output folder.
  */
 export interface ProcessFeatures {
-  /** Convert emails to readable PDFs. (A full production renders every doc too.) */
+  /** Convert emails to readable PDFs. (A review index or production renders every doc too.) */
   emailToPdf: boolean
-  /** Internal review index spreadsheet over the whole set (for your own team). */
-  internalIndex: boolean
-  /** External production load file (.DAT + .CSV) over the whole set (for counsel). */
-  externalIndex: boolean
+  /** Review index spreadsheet over the whole set — for your own review team (internal). */
+  reviewIndex: boolean
+  /** Production load file (.DAT + .CSV) over the whole set — for opposing counsel (external). */
+  loadFile: boolean
   /** Extract reviewer highlights and write a highlights table. */
   highlights: boolean
   /** Enrich each doc with a Claude-generated summary / type / parties. */
@@ -341,9 +341,9 @@ export interface ProductionResult {
   pdfCount: number
   /** First/last Bates numbers across the production. */
   batesRange?: { begin: string; end: string }
-  /** Internal review index spreadsheet (filename under the output folder). */
+  /** Review index spreadsheet (filename under the output folder) — internal. */
   indexPath?: string
-  /** External production load file (.DAT; a .CSV sits beside it). */
+  /** Production load file (.DAT; a .CSV sits beside it) — external. */
   loadFilePath?: string
   /** Highlights table (xlsx). */
   highlightsPath?: string

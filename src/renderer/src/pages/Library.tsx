@@ -34,8 +34,8 @@ export default function Library(): JSX.Element {
               <FolderCog className="w-7 h-7 text-accent" /> Process documents
             </h1>
             <p className="text-ink-600 mt-2 text-[15px]">
-              Point at a group of documents, pick what to produce — searchable index, email→PDF, an internal or external
-              production index, highlights — and get one output bundle.
+              Point at a group of documents, pick what to produce — searchable index, email→PDF, a review index or a
+              production for opposing counsel, highlights — and get one output bundle.
             </p>
             <div className="mt-2.5 inline-flex items-center gap-1.5 text-[11.5px] text-emerald-300 bg-emerald-500/10 border border-emerald-500/30 rounded-full px-2.5 py-1">
               <HardDrive className="w-3.5 h-3.5" /> Everything runs 100% on your computer — no documents leave the device
@@ -81,8 +81,8 @@ function FeatureChips({ c }: { c: Collection }): JSX.Element | null {
   if (!f) return null
   const chips: { on: boolean; icon: JSX.Element; label: string }[] = [
     { on: f.emailToPdf, icon: <Mail className="w-3 h-3" />, label: 'Email→PDF' },
-    { on: f.internalIndex, icon: <FileSpreadsheet className="w-3 h-3" />, label: 'Internal' },
-    { on: f.externalIndex, icon: <Send className="w-3 h-3" />, label: 'External' },
+    { on: f.reviewIndex, icon: <FileSpreadsheet className="w-3 h-3" />, label: 'Review' },
+    { on: f.loadFile, icon: <Send className="w-3 h-3" />, label: 'Production' },
     { on: f.highlights, icon: <Highlighter className="w-3 h-3" />, label: 'Highlights' },
     { on: f.aiEnrich, icon: <Sparkles className="w-3 h-3" />, label: 'AI' }
   ]
@@ -206,8 +206,8 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const [output, setOutput] = useState('')
   const [outputTouched, setOutputTouched] = useState(false)
   const [emailToPdf, setEmailToPdf] = useState(true)
-  const [internalIndex, setInternalIndex] = useState(true)
-  const [externalIndex, setExternalIndex] = useState(false)
+  const [reviewIndex, setReviewIndex] = useState(true)
+  const [loadFile, setLoadFile] = useState(false)
   const [highlights, setHighlights] = useState(false)
   const [aiEnrich, setAiEnrich] = useState(false)
   const [combine, setCombine] = useState(true)
@@ -215,8 +215,8 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const [batesStart, setBatesStart] = useState('1')
   const [busy, setBusy] = useState(false)
 
-  const wantsOutput = emailToPdf || internalIndex || externalIndex || highlights
-  const wantsBates = internalIndex || externalIndex || emailToPdf
+  const wantsOutput = emailToPdf || reviewIndex || loadFile || highlights
+  const wantsBates = reviewIndex || loadFile || emailToPdf
 
   // Default the output to the matter folder + the set name, so the user never
   // has to open a picker. They can edit the text or Browse to override it.
@@ -242,7 +242,7 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const create = async (): Promise<void> => {
     if (!canCreate) return
     setBusy(true)
-    const features: ProcessFeatures = { emailToPdf, internalIndex, externalIndex, highlights, aiEnrich }
+    const features: ProcessFeatures = { emailToPdf, reviewIndex, loadFile, highlights, aiEnrich }
     await createCollection({
       name: name.trim() || 'Untitled document set',
       folders,
@@ -299,16 +299,16 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
         <div className="mt-5 text-[13px] text-ink-600">Produce</div>
         <div className="mt-1 rounded-lg border border-ink-700/70 bg-ink-900/40 divide-y divide-ink-800/70">
           <Toggle checked={emailToPdf} onChange={setEmailToPdf} icon={<Mail className="w-3.5 h-3.5 text-accent" />} title="Convert emails to PDF" desc="Render each .eml to a readable PDF (attachments alongside)." />
-          <Toggle checked={internalIndex} onChange={setInternalIndex} icon={<FileSpreadsheet className="w-3.5 h-3.5 text-accent" />} title="Internal review index (Excel)" desc="Bates, date, type, from/to, subject — for your own team." />
-          <Toggle checked={externalIndex} onChange={setExternalIndex} icon={<Send className="w-3.5 h-3.5 text-accent" />} title="External production load file (.DAT + CSV)" desc="For opposing counsel / a review platform; family ranges + Bates." />
+          <Toggle checked={reviewIndex} onChange={setReviewIndex} icon={<FileSpreadsheet className="w-3.5 h-3.5 text-accent" />} title="Review index (Excel)" desc="Bates, date, type, from/to, subject — for your own review team." />
+          <Toggle checked={loadFile} onChange={setLoadFile} icon={<Send className="w-3.5 h-3.5 text-accent" />} title="Production load file (.DAT + .CSV)" desc="For opposing counsel / their review platform; family ranges + Bates." />
           <Toggle checked={highlights} onChange={setHighlights} icon={<Highlighter className="w-3.5 h-3.5 text-accent" />} title="Highlights table" desc="Extract every reviewer highlight to a spreadsheet." />
           <Toggle checked={aiEnrich} onChange={setAiEnrich} icon={<Sparkles className="w-3.5 h-3.5 text-accent" />} title="AI summaries" desc="One-line summary, type, and parties per doc (uses the API; slower)." />
         </div>
 
-        {(internalIndex || externalIndex) && (
+        {(reviewIndex || loadFile) && (
           <p className="mt-2 text-[11.5px] text-ink-600">
-            An internal/external index renders <span className="text-slate-400">every</span> document to a Bates-numbered PDF
-            in the output folder.
+            A review index or production renders <span className="text-slate-400">every</span> document to a Bates-numbered
+            PDF in the output folder.
           </p>
         )}
 

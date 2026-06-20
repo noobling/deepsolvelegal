@@ -22,12 +22,12 @@ export interface ProdRecord {
   attNames: string
 }
 
-export const INTERNAL_HEADER = [
-  'Bates Begin', 'Bates End', 'Pages', 'Date', 'Type', 'From', 'To', 'Subject / Title', 'File', '# Attachments'
+export const REVIEW_HEADER = [
+  'Beginning Bates', 'Ending Bates', 'Pages', 'Date', 'Type', 'From', 'To', 'Subject / Title', 'File', '# Attachments'
 ]
 
-/** Internal review index rows (human-readable, for your own team). */
-export function internalIndexRows(records: ProdRecord[]): string[][] {
+/** Review index rows — human-readable, for your own review team (internal). */
+export function reviewIndexRows(records: ProdRecord[]): string[][] {
   return records.map((r) => [
     r.begBates,
     r.endBates,
@@ -84,14 +84,13 @@ export function highlightRows(docs: Pick<IndexedDoc, 'name' | 'highlights'>[]): 
 }
 
 /**
- * Which documents the production renders: a full production (internal/external
- * index) renders every doc so it can carry a Bates number; "email→PDF" alone
- * renders just the emails.
+ * Which documents to render: a review index or a production renders every doc so
+ * it can carry a Bates number; "email→PDF" alone renders just the emails.
  */
 export function productionTargets<T extends { kind: 'email' | 'doc' }>(
   docs: T[],
-  features: { emailToPdf: boolean; internalIndex: boolean; externalIndex: boolean }
+  features: { emailToPdf: boolean; reviewIndex: boolean; loadFile: boolean }
 ): T[] {
-  const full = features.internalIndex || features.externalIndex
+  const full = features.reviewIndex || features.loadFile
   return docs.filter((d) => full || (features.emailToPdf && d.kind === 'email'))
 }

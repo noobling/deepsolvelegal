@@ -257,7 +257,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const name = input.name || 'Untitled document set'
     // A set that produces a bundle needs an output folder. Default to the matter
     // folder + the set name so the user never has to pick one.
-    const wantsOutput = !!features && (features.emailToPdf || features.internalIndex || features.externalIndex || features.highlights)
+    const wantsOutput = !!features && (features.emailToPdf || features.reviewIndex || features.loadFile || features.highlights)
     let output = input.output?.trim() || undefined
     if (wantsOutput && !output) {
       const settings = await getSettings()

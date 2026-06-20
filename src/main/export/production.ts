@@ -8,10 +8,10 @@ import { renderDocToPdf, slipSheet } from './docToPdf'
 import { rowsToXlsx } from './convert'
 import {
   HIGHLIGHT_HEADER,
-  INTERNAL_HEADER,
+  REVIEW_HEADER,
   LOADFILE_HEADER,
   highlightRows,
-  internalIndexRows,
+  reviewIndexRows,
   loadFileRows,
   productionTargets,
   type ProdRecord
@@ -19,8 +19,8 @@ import {
 
 // Turn an indexed document set into a single Bates-numbered production under the
 // output folder, then write the deliverables the enabled features ask for:
-//   - internal review index (xlsx)            → features.internalIndex
-//   - external production load file (.DAT/.CSV) → features.externalIndex
+//   - review index (xlsx)                       → features.reviewIndex
+//   - production load file (.DAT/.CSV)          → features.loadFile
 //   - highlights table (xlsx)                  → features.highlights
 // A full production (internal/external index) renders EVERY document to PDF so it
 // can carry a Bates number; "convert emails to PDF" alone renders just the emails.
@@ -156,11 +156,11 @@ export async function buildProduction(
   const result: ProductionResult = { pdfCount: 0, slipSheets: 0, errors: [] }
   await fs.mkdir(outRoot, { recursive: true })
 
-  // A full production renders every doc; "email→PDF" alone renders just emails.
-  const fullProduction = features.internalIndex || features.externalIndex
+  // A review index or production renders every doc; "email→PDF" alone renders just emails.
+  const fullProduction = features.reviewIndex || features.loadFile
   const targets = productionTargets(docs, features).sort((a, b) => a.path.localeCompare(b.path)) // deterministic, contiguous Bates
 
-  // Internal/external indexes need Bates; default a prefix if the user didn't set one.
+  // A review index / production needs Bates; default a prefix if the user didn't set one.
   const bates = collection.bates ?? (fullProduction ? { prefix: 'DOC-', start: 1 } : null)
   const stampOn = !!bates
   const prefix = bates?.prefix ?? ''
@@ -200,15 +200,15 @@ export async function buildProduction(
     if (first && last) result.batesRange = { begin: first.begBates, end: last.endBates }
   }
 
-  // Internal review index — human-readable, for your own team.
-  if (features.internalIndex && records.length) {
-    const p = path.join(outRoot, 'Production Index.xlsx')
-    await fs.writeFile(p, await rowsToXlsx([INTERNAL_HEADER, ...internalIndexRows(records)], 'Production Index'))
+  // Review index — human-readable, for your own review team (internal).
+  if (features.reviewIndex && records.length) {
+    const p = path.join(outRoot, 'Review Index.xlsx')
+    await fs.writeFile(p, await rowsToXlsx([REVIEW_HEADER, ...reviewIndexRows(records)], 'Review Index'))
     result.indexPath = p
   }
 
-  // External production load file — Concordance .DAT + universal .CSV, with family ranges.
-  if (features.externalIndex && records.length) {
+  // Production load file — Concordance .DAT + universal .CSV, with family ranges (external).
+  if (features.loadFile && records.length) {
     const table = [LOADFILE_HEADER, ...loadFileRows(records)]
     const datPath = path.join(outRoot, 'Production Load File.dat')
     await fs.writeFile(datPath, toDat(table))

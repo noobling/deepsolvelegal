@@ -167,7 +167,7 @@ export async function buildIndex(collectionId: string, emit: Emit): Promise<void
     // enabled features. Best-effort relative to the index — a production failure
     // is recorded but doesn't poison the (already saved) searchable index.
     const f = collection.features
-    if (collection.output && f && (f.emailToPdf || f.internalIndex || f.externalIndex || f.highlights) && !cancelled.has(collectionId)) {
+    if (collection.output && f && (f.emailToPdf || f.reviewIndex || f.loadFile || f.highlights) && !cancelled.has(collectionId)) {
       try {
         collection.production = await buildProduction(collection, docs, emit, () => cancelled.has(collectionId))
       } catch (e) {

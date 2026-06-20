@@ -14,7 +14,6 @@ import {
   Highlighter,
   FolderOpen,
   Send,
-  Mail,
   FileStack
 } from 'lucide-react'
 
@@ -239,8 +238,8 @@ function OutputsPanel({ c, indexing }: { c: CollectionType; indexing: boolean })
       label: `${p?.pdfCount ?? 0} PDF${p?.pdfCount === 1 ? '' : 's'} produced`,
       sub: p?.batesRange ? `Bates ${p.batesRange.begin}–${p.batesRange.end}` : 'rendered to the output folder'
     },
-    { show: !!p?.indexPath, icon: <FileSpreadsheet className="w-4 h-4 text-accent" />, label: 'Internal review index', sub: base(p?.indexPath), path: p?.indexPath },
-    { show: !!p?.loadFilePath, icon: <Send className="w-4 h-4 text-accent" />, label: 'External load file', sub: base(p?.loadFilePath) + ' + .csv', path: p?.loadFilePath },
+    { show: !!p?.indexPath, icon: <FileSpreadsheet className="w-4 h-4 text-accent" />, label: 'Review index', sub: base(p?.indexPath), path: p?.indexPath },
+    { show: !!p?.loadFilePath, icon: <Send className="w-4 h-4 text-accent" />, label: 'Production load file', sub: base(p?.loadFilePath) + ' + .csv', path: p?.loadFilePath },
     { show: !!p?.highlightsPath, icon: <Highlighter className="w-4 h-4 text-accent" />, label: 'Highlights table', sub: base(p?.highlightsPath), path: p?.highlightsPath }
   ]
   const shown = artifacts.filter((a) => a.show)
@@ -250,7 +249,7 @@ function OutputsPanel({ c, indexing }: { c: CollectionType; indexing: boolean })
       <div className="rounded-xl border border-accent/30 bg-accent/[0.05] p-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-accent/90">
-            <Mail className="w-3.5 h-3.5" /> Production output
+            <FolderOpen className="w-3.5 h-3.5" /> Output
           </div>
           <button
             onClick={() => c.output && reveal(c.output)}
