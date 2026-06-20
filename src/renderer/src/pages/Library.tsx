@@ -234,7 +234,9 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const [combine, setCombine] = useState(true)
   const [excludeSignatures, setExcludeSignatures] = useState(false)
   const [excludeAttachmentsText, setExcludeAttachmentsText] = useState('')
-  const [excludeUnderKbText, setExcludeUnderKbText] = useState('')
+  // Default 10 KB: in the sample matter the smallest real document was ~11 KB, while
+  // signature logos / calendar invites / empty MIME parts all fell below it.
+  const [excludeUnderKbText, setExcludeUnderKbText] = useState('10')
   const [batesPrefix, setBatesPrefix] = useState('DOC-')
   const [batesStart, setBatesStart] = useState('1')
   const [busy, setBusy] = useState(false)
@@ -410,7 +412,7 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
                 placeholder="e.g. 10"
                 className="w-16 bg-ink-950 border border-ink-700 rounded px-2 py-1 text-slate-200 outline-none focus:border-accent/60"
               />
-              <span className="text-ink-600">KB — small files are likely logos/icons, not real documents (still kept in Excluded/ to double-check)</span>
+              <span className="text-ink-600">KB — small files are usually logos/icons or empty parts, not real documents (set 0 to disable; kept in Excluded/ to double-check)</span>
             </label>
             <div className="flex items-center gap-2 text-[12px]">
               <Hash className="w-3.5 h-3.5 text-ink-600" />
