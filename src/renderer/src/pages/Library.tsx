@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useStore } from '../state/store'
+import ProgressBar from '../components/ProgressBar'
 import type { Collection, ProcessFeatures } from '@shared/types'
 import {
   FolderCog,
@@ -126,7 +127,7 @@ function CollectionCard({
   const pct = progress && progress.total ? Math.round((progress.done / progress.total) * 100) : 0
   return (
     <div className="rounded-xl border border-ink-700/70 bg-ink-900/60 p-4 hover:border-ink-600 transition">
-      <button onClick={onOpen} className="block text-left w-full" disabled={indexing}>
+      <button onClick={onOpen} className="block text-left w-full" title="Open">
         <div className="font-medium text-slate-100 truncate">{c.name}</div>
         <div className="text-[12px] text-ink-600 mt-0.5 truncate">{c.folders.join(', ')}</div>
       </button>
@@ -187,11 +188,7 @@ function CollectionCard({
         </div>
       </div>
 
-      {indexing && (
-        <div className="mt-2 h-1.5 rounded-full bg-ink-800 overflow-hidden">
-          <div className="h-full bg-accent transition-all" style={{ width: `${pct}%` }} />
-        </div>
-      )}
+      {indexing && <ProgressBar pct={pct} className="mt-2" />}
     </div>
   )
 }
@@ -236,6 +233,7 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const [aiEnrich, setAiEnrich] = useState(false)
   const [combine, setCombine] = useState(true)
   const [excludeSignatures, setExcludeSignatures] = useState(false)
+  const [excludeAttachmentsText, setExcludeAttachmentsText] = useState('')
   const [batesPrefix, setBatesPrefix] = useState('DOC-')
   const [batesStart, setBatesStart] = useState('1')
   const [busy, setBusy] = useState(false)
@@ -276,6 +274,10 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
       bates: wantsBates ? { prefix: batesPrefix, start: Math.max(1, parseInt(batesStart, 10) || 1) } : undefined,
       combineAttachments: combine,
       excludeSignatures,
+      excludeAttachments: excludeAttachmentsText
+        .split('\n')
+        .map((s) => s.trim())
+        .filter(Boolean),
       aiEnrich
     })
     onClose()
@@ -378,6 +380,22 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
                 <span className="text-ink-600"> · removes logos/icons + footer boilerplate (disclaimers, “Sent from my…”); keeps content photos &amp; text</span>
               </span>
             </label>
+            <div>
+              <div className="text-[12.5px] text-slate-300">
+                Exclude attachments by filename
+                <span className="text-ink-600"> · one per line (e.g. logos / letterheads like TPL4AL.pdf, image001.png)</span>
+              </div>
+              <textarea
+                value={excludeAttachmentsText}
+                onChange={(e) => setExcludeAttachmentsText(e.target.value)}
+                placeholder={'TPL4AL.pdf\nimage001.png'}
+                rows={3}
+                className="mt-1 w-full rounded-lg bg-ink-950 border border-ink-700 px-2.5 py-1.5 text-[12px] text-slate-200 font-mono outline-none focus:border-accent/60 resize-y"
+              />
+              <div className="text-[11px] text-ink-600">
+                Excluded files go to an <span className="text-slate-400">Excluded/</span> folder; copies of one name with different sizes are flagged in <span className="text-slate-400">Needs Review</span>.
+              </div>
+            </div>
             <div className="flex items-center gap-2 text-[12px]">
               <Hash className="w-3.5 h-3.5 text-ink-600" />
               <span className="text-ink-600">Bates prefix</span>

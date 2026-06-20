@@ -106,10 +106,11 @@ export function stripBoilerplate(html: string): string {
 
 export function buildEmailHtml(
   mail: ParsedMail,
-  opts: { excludeSignatures?: boolean } = {}
-): { html: string; fileAttachments: Attachment[] } {
+  opts: { excludeSignatures?: boolean; excludeAttachments?: string[] } = {}
+): { html: string; fileAttachments: Attachment[]; excludedAttachments: Attachment[] } {
   const atts = (mail.attachments || []) as Attachment[]
   const excludeSignatures = !!opts.excludeSignatures
+  const excludeNames = new Set((opts.excludeAttachments || []).map((s) => s.trim().toLowerCase()).filter(Boolean))
   let body = typeof mail.html === 'string' && mail.html ? mail.html : mail.textAsHtml || '<p>(no message body)</p>'
 
   // Apple Mail interleaves several full <html>…</html> documents (one per inline
@@ -168,7 +169,11 @@ export function buildEmailHtml(
     body = body.replace(/(?:\s*<br\b[^>]*\/?>\s*){3,}/gi, '<br><br>')
   }
 
-  const fileAttachments = atts.filter((a) => !embedded.has(a))
+  // Attachments not embedded inline, split into kept vs. excluded-by-filename.
+  const allAttachments = atts.filter((a) => !embedded.has(a))
+  const isExcluded = (a: Attachment): boolean => excludeNames.has((a.filename || '').trim().toLowerCase())
+  const excludedAttachments = excludeNames.size ? allAttachments.filter(isExcluded) : []
+  const fileAttachments = excludeNames.size ? allAttachments.filter((a) => !isExcluded(a)) : allAttachments
 
   const addrText = (v: ParsedMail['to']): string =>
     (Array.isArray(v) ? v.map((t) => t.text).join(', ') : v?.text) || ''
@@ -200,5 +205,5 @@ export function buildEmailHtml(
     ${attBox}
   </body></html>`
 
-  return { html, fileAttachments }
+  return { html, fileAttachments, excludedAttachments }
 }

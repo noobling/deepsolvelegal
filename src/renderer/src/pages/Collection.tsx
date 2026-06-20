@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { useStore } from '../state/store'
+import ProgressBar from '../components/ProgressBar'
 import type { Collection as CollectionType, IndexedDoc } from '@shared/types'
 import {
   ArrowLeft,
@@ -16,7 +17,9 @@ import {
   Send,
   FileStack,
   Pause,
-  Play
+  Play,
+  FileX,
+  AlertTriangle
 } from 'lucide-react'
 
 type Col = { key: keyof IndexedDoc; label: string }
@@ -43,6 +46,8 @@ export default function Collection(): JSX.Element {
   const c = collectionDetail
   const indexing = c?.status === 'indexing' || !!(c && indexProgress[c.id])
   const isPaused = c?.status === 'paused'
+  const prog = c ? indexProgress[c.id] : undefined
+  const pct = prog && prog.total ? Math.round((prog.done / prog.total) * 100) : 0
 
   const hasEmail = useMemo(() => (c?.docs ?? []).some((d) => d.kind === 'email'), [c])
   const hasSummary = useMemo(() => (c?.docs ?? []).some((d) => d.summary), [c])
@@ -164,6 +169,16 @@ export default function Collection(): JSX.Element {
         </div>
       </header>
 
+      {indexing && (
+        <div className="px-5 pt-3">
+          <div className="flex justify-between items-center text-[11.5px] text-accent mb-1.5">
+            <span>{prog ? `${prog.phase}…` : 'Processing…'}</span>
+            <span className="text-ink-600">{prog ? `${prog.done} / ${prog.total}` : ''}</span>
+          </div>
+          <ProgressBar pct={pct} />
+        </div>
+      )}
+
       {c.output && <OutputsPanel c={c} indexing={indexing} paused={isPaused} />}
 
       <div className="px-5 pt-3 pb-1 flex items-center gap-2 text-[11px] uppercase tracking-wider text-ink-600">
@@ -260,6 +275,9 @@ function OutputsPanel({ c, indexing, paused }: { c: CollectionType; indexing: bo
   const reveal = (path: string): void => void window.api.files.reveal(path)
   // Show the folder + filename (e.g. "Reports/Review Index.xlsx") so the layout is clear.
   const rel = (path?: string): string => (path ? path.split(/[\\/]/).slice(-2).join('/') : '')
+  // Build a path under the output folder with the right separator for the platform.
+  const sep = c.output?.includes('\\') ? '\\' : '/'
+  const outPath = (...parts: string[]): string | undefined => (c.output ? [c.output, ...parts].join(sep) : undefined)
 
   const artifacts: { show: boolean; icon: JSX.Element; label: string; sub: string; path?: string }[] = [
     {
@@ -270,7 +288,14 @@ function OutputsPanel({ c, indexing, paused }: { c: CollectionType; indexing: bo
     },
     { show: !!p?.indexPath, icon: <FileSpreadsheet className="w-4 h-4 text-accent" />, label: 'Review index', sub: rel(p?.indexPath), path: p?.indexPath },
     { show: !!p?.loadFilePath, icon: <Send className="w-4 h-4 text-accent" />, label: 'Production load file', sub: rel(p?.loadFilePath) + ' + .csv', path: p?.loadFilePath },
-    { show: !!p?.highlightsPath, icon: <Highlighter className="w-4 h-4 text-accent" />, label: 'Highlights table', sub: rel(p?.highlightsPath), path: p?.highlightsPath }
+    { show: !!p?.highlightsPath, icon: <Highlighter className="w-4 h-4 text-accent" />, label: 'Highlights table', sub: rel(p?.highlightsPath), path: p?.highlightsPath },
+    {
+      show: !!p && p.excludedAttachments > 0,
+      icon: <FileX className="w-4 h-4 text-accent" />,
+      label: `${p?.excludedAttachments} attachment${p?.excludedAttachments === 1 ? '' : 's'} excluded`,
+      sub: p?.inconsistentAttachments ? `${p.inconsistentAttachments} need review` : 'Excluded/',
+      path: outPath('Excluded')
+    }
   ]
   const shown = artifacts.filter((a) => a.show)
 
@@ -327,8 +352,25 @@ function OutputsPanel({ c, indexing, paused }: { c: CollectionType; indexing: bo
             <span className="text-slate-300">{p.skipped}</span> unchanged (reused)
             {p.removed > 0 && <span> · {p.removed} removed from input</span>}
             {p.slipSheets > 0 && <span> · {p.slipSheets} slip-sheeted</span>}
+            {p.excludedAttachments > 0 && <span> · {p.excludedAttachments} attachments excluded</span>}
             {p.errors.length > 0 && <span className="text-amber-300/80"> · {p.errors.length} failed</span>}
           </div>
+        )}
+
+        {p && !indexing && p.inconsistentAttachments > 0 && (
+          <button
+            onClick={() => {
+              const path = outPath('Excluded', 'Needs Review')
+              if (path) reveal(path)
+            }}
+            className="mt-2 flex items-start gap-2 text-left rounded-lg border border-amber-500/40 bg-amber-500/[0.07] p-2.5 text-[12px] text-amber-200/90 hover:border-amber-500/60 w-full"
+          >
+            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span>
+              {p.inconsistentAttachments} excluded filename{p.inconsistentAttachments === 1 ? ' has' : 's have'} copies of different sizes — check{' '}
+              <span className="text-amber-200">Excluded/Needs Review</span> in case a real document was filtered out.
+            </span>
+          </button>
         )}
       </div>
     </div>

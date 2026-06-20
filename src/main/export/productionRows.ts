@@ -84,6 +84,26 @@ export function highlightRows(docs: Pick<IndexedDoc, 'name' | 'highlights'>[]): 
 }
 
 /**
+ * Summarize excluded attachments for the whole set. Copies of a filename are
+ * "consistent" when byte-identical (same content hash); a filename with two or
+ * more distinct hashes is flagged for review (one of them may be a real document
+ * misnamed like the boilerplate). Counts are derived from metadata so they stay
+ * correct on incremental runs without re-reading skipped documents.
+ */
+export function excludedSummary(meta: { name: string; hash: string }[]): { total: number; inconsistentNames: number } {
+  const byName = new Map<string, Set<string>>()
+  for (const m of meta) {
+    const key = m.name.trim().toLowerCase()
+    const hashes = byName.get(key)
+    if (hashes) hashes.add(m.hash)
+    else byName.set(key, new Set([m.hash]))
+  }
+  let inconsistentNames = 0
+  for (const hashes of byName.values()) if (hashes.size > 1) inconsistentNames++
+  return { total: meta.length, inconsistentNames }
+}
+
+/**
  * Which documents to render: a review index or a production renders every doc so
  * it can carry a Bates number; "email→PDF" alone renders just the emails.
  */

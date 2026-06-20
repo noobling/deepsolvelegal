@@ -1,4 +1,5 @@
 import { promises as fs } from 'fs'
+import { createHash } from 'crypto'
 import path from 'path'
 import { simpleParser, type ParsedMail } from 'mailparser'
 import type { Collection, IndexedDoc, IndexEvent, ProcessFeatures, ProductionResult } from '@shared/types'
@@ -15,8 +16,11 @@ import {
   reviewIndexRows,
   loadFileRows,
   productionTargets,
+  excludedSummary,
   type ProdRecord
 } from './productionRows'
+
+const sha1 = (buf: Buffer): string => createHash('sha1').update(buf).digest('hex')
 
 // Turn an indexed document set into a single Bates-numbered production under the
 // output folder, then write the deliverables the enabled features ask for:
@@ -32,12 +36,28 @@ const PAD = 6
 
 const addr = (v: ParsedMail['to']): string => (Array.isArray(v) ? v.map((t) => t.text).join('; ') : v?.text) || ''
 
+/** Filename + size + content hash of an excluded attachment (no content). */
+interface ExcludedMeta {
+  name: string
+  size: number
+  hash: string
+}
+
 /** A produced document remembered across runs: its row data + input file state. */
 interface ProdItem extends ProdRecord {
   id: string
   path: string
   mtime: number
   size: number
+  /** Excluded attachments this doc contributed — so counts stay correct on re-runs. */
+  excluded?: ExcludedMeta[]
+}
+
+/** An attachment filtered out of the production by filename, kept for review. */
+interface ExcludedAtt extends ExcludedMeta {
+  content: Buffer
+  /** The email it came from (relative path), for the listing. */
+  source: string
 }
 
 /** A produced PDF + the metadata row it contributes to the indexes. */
@@ -46,10 +66,11 @@ async function produceOne(
   doc: IndexedDoc,
   outRoot: string,
   rel: string,
-  opts: { combine: boolean; stamp: boolean; prefix: string; batesStart: number; excludeSignatures: boolean },
+  opts: { combine: boolean; stamp: boolean; prefix: string; batesStart: number; excludeSignatures: boolean; excludeAttachments: string[] },
   used: Set<string>,
-  result: ProductionResult
-): Promise<ProdRecord> {
+  result: ProductionResult,
+  excludedSink: ExcludedAtt[]
+): Promise<{ rec: ProdRecord; excludedMeta: ExcludedMeta[] }> {
   const ext = doc.ext
   const base = path.basename(doc.name, ext)
   const relDir = path.dirname(rel) === '.' ? '' : path.dirname(rel)
@@ -57,6 +78,7 @@ async function produceOne(
   // (review index, load file, highlights), which go in their own folders.
   const docsRoot = path.join(outRoot, 'Documents')
 
+  const excludedMeta: ExcludedMeta[] = []
   let pdf: Buffer
   let from = ''
   let to = ''
@@ -70,9 +92,15 @@ async function produceOne(
 
   if (ext === '.eml') {
     const mail = await simpleParser(await fs.readFile(doc.path))
-    const built = buildEmailHtml(mail, { excludeSignatures: opts.excludeSignatures })
+    const built = buildEmailHtml(mail, { excludeSignatures: opts.excludeSignatures, excludeAttachments: opts.excludeAttachments })
     pdf = await renderInto(win, built.html)
     if (opts.combine && built.fileAttachments.length) pdf = await combineFamily(pdf, built.fileAttachments)
+    // Excluded-by-filename attachments are routed to Excluded/, not the family folder.
+    for (const a of built.excludedAttachments) {
+      const meta: ExcludedMeta = { name: a.filename || 'attachment', size: a.content.length, hash: sha1(a.content) }
+      excludedMeta.push(meta)
+      excludedSink.push({ ...meta, content: a.content, source: rel })
+    }
     from = mail.from?.text || ''
     to = addr(mail.to)
     cc = addr(mail.cc)
@@ -140,7 +168,7 @@ async function produceOne(
     await fs.writeFile(path.join(folder, n), a.content)
   }
 
-  return {
+  const rec: ProdRecord = {
     begBates,
     endBates,
     pages,
@@ -155,6 +183,67 @@ async function produceOne(
     attCount,
     attNames
   }
+  return { rec, excludedMeta }
+}
+
+/**
+ * Write excluded attachments to <output>/Excluded/ for review. Byte-identical
+ * copies of a filename (same content hash) collapse to one representative; a
+ * filename with two or more DISTINCT contents has each variant written to
+ * Excluded/Needs Review/<name>/ — one of them might be a real document misnamed
+ * like the boilerplate. A listing spreadsheet records the details. Called only on
+ * a full render, when every excluded attachment's content is in hand.
+ */
+async function writeExcludedFolder(outRoot: string, excluded: ExcludedAtt[]): Promise<void> {
+  const dir = path.join(outRoot, 'Excluded')
+  await fs.rm(dir, { recursive: true, force: true }).catch(() => {}) // fresh slate
+  if (!excluded.length) return
+  await fs.mkdir(dir, { recursive: true })
+
+  const groups = new Map<string, ExcludedAtt[]>()
+  for (const e of excluded) {
+    const key = e.name.trim().toLowerCase()
+    const arr = groups.get(key)
+    if (arr) arr.push(e)
+    else groups.set(key, [e])
+  }
+
+  // Never let two distinct files share an output path (odd characters in a
+  // filename, or two same-size variants) — disambiguate with a leading "_".
+  const used = new Set<string>()
+  const uniquePath = (folder: string, name: string): string => {
+    let n = safeName(name)
+    while (used.has(path.join(folder, n).toLowerCase())) n = '_' + n
+    used.add(path.join(folder, n).toLowerCase())
+    return path.join(folder, n)
+  }
+
+  const listing: string[][] = [['Filename', 'Copies', 'Distinct files', 'Sizes (bytes)', 'Consistent', 'From emails']]
+  for (const items of groups.values()) {
+    const byHash = new Map<string, ExcludedAtt>()
+    for (const it of items) if (!byHash.has(it.hash)) byHash.set(it.hash, it)
+    const variants = [...byHash.values()]
+    if (variants.length === 1) {
+      await fs.writeFile(uniquePath(dir, items[0].name), variants[0].content)
+    } else {
+      const sub = path.join(dir, 'Needs Review', safeName(items[0].name))
+      await fs.mkdir(sub, { recursive: true })
+      for (const v of variants) {
+        const ext = path.extname(v.name)
+        await fs.writeFile(uniquePath(sub, `${path.basename(v.name, ext)} (${v.size} bytes)${ext}`), v.content)
+      }
+    }
+    listing.push([
+      items[0].name,
+      String(items.length),
+      String(variants.length),
+      [...new Set(items.map((i) => i.size))].sort((a, b) => a - b).join(', '),
+      variants.length === 1 ? 'yes' : 'NEEDS REVIEW',
+      [...new Set(items.map((i) => i.source))].join('; ')
+    ])
+  }
+
+  await fs.writeFile(path.join(dir, 'Excluded Attachments.xlsx'), await rowsToXlsx(listing, 'Excluded'))
 }
 
 export async function buildProduction(
@@ -165,7 +254,8 @@ export async function buildProduction(
 ): Promise<ProductionResult> {
   const features = collection.features as ProcessFeatures
   const outRoot = path.resolve(collection.output as string)
-  const result: ProductionResult = { pdfCount: 0, processed: 0, skipped: 0, removed: 0, slipSheets: 0, errors: [] }
+  const result: ProductionResult = { pdfCount: 0, processed: 0, skipped: 0, removed: 0, slipSheets: 0, excludedAttachments: 0, inconsistentAttachments: 0, errors: [] }
+  const excludeAttachments = collection.excludeAttachments ?? []
   await fs.mkdir(outRoot, { recursive: true })
 
   // A review index or production renders every doc; "email→PDF" alone renders just emails.
@@ -194,6 +284,7 @@ export async function buildProduction(
   const configKey = JSON.stringify({
     combine: !!collection.combineAttachments,
     excludeSignatures: !!collection.excludeSignatures,
+    excludeAttachments: [...excludeAttachments].map((s) => s.trim().toLowerCase()).sort(),
     bates: collection.bates ?? null,
     emailToPdf: features.emailToPdf,
     reviewIndex: features.reviewIndex,
@@ -215,6 +306,7 @@ export async function buildProduction(
 
   const used = new Set<string>()
   const items: ProdItem[] = []
+  const excludedSink: ExcludedAtt[] = []
   const win = makeRenderWindow()
   try {
     for (let i = 0; i < targets.length; i++) {
@@ -233,8 +325,8 @@ export async function buildProduction(
         continue
       }
       try {
-        const rec = await produceOne(win, doc, outRoot, relFor(doc.path), { combine: !!collection.combineAttachments, stamp: stampOn, prefix, batesStart: batesNext, excludeSignatures: !!collection.excludeSignatures }, used, result)
-        items.push({ id: doc.id, path: doc.path, mtime: doc.modifiedAt, size: doc.size, ...rec })
+        const { rec, excludedMeta } = await produceOne(win, doc, outRoot, relFor(doc.path), { combine: !!collection.combineAttachments, stamp: stampOn, prefix, batesStart: batesNext, excludeSignatures: !!collection.excludeSignatures, excludeAttachments }, used, result, excludedSink)
+        items.push({ id: doc.id, path: doc.path, mtime: doc.modifiedAt, size: doc.size, excluded: excludedMeta, ...rec })
         batesNext += rec.pages
         result.processed++
         result.pdfCount++
@@ -246,6 +338,18 @@ export async function buildProduction(
     win.destroy()
   }
   emit({ type: 'index-progress', collectionId: collection.id, phase: 'Building production', done: targets.length, total: targets.length })
+
+  // Excluded-attachment counts come from the full set's metadata (each manifest
+  // item carries its excluded {name,size,hash}), so the Needs Review warning stays
+  // correct even on incremental re-runs. The Excluded/ FOLDER (the actual files) is
+  // (re)written only on a full render, when every excluded attachment is in hand.
+  const summary = excludedSummary(items.flatMap((i) => i.excluded ?? []))
+  result.excludedAttachments = summary.total
+  result.inconsistentAttachments = summary.inconsistentNames
+  if (!isCancelled() && result.skipped === 0) {
+    await writeExcludedFolder(outRoot, excludedSink)
+  }
+
   // Persist the manifest (full or partial) so a paused run resumes from here.
   await saveProductionManifest(collection.id, { config: configKey, items })
   // Paused/cancelled mid-render: leave the index/load-file regeneration for the

@@ -280,6 +280,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       bates: input.bates,
       combineAttachments: input.combineAttachments,
       excludeSignatures: input.excludeSignatures,
+      excludeAttachments: input.excludeAttachments,
       aiEnrich: !!(input.aiEnrich || features?.aiEnrich)
     }
     await saveCollection(c)

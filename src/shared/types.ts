@@ -357,6 +357,10 @@ export interface ProductionResult {
   highlightsPath?: string
   /** Unrenderable files given a native slip-sheet placeholder (still Bates-stamped). */
   slipSheets: number
+  /** Attachments filtered out (by filename) into the Excluded/ folder. */
+  excludedAttachments: number
+  /** Excluded filenames whose copies differ in size — routed to Needs Review for a human check. */
+  inconsistentAttachments: number
   /** Per-file errors during production (non-fatal; the file is skipped). */
   errors: { file: string; error: string }[]
 }
@@ -380,6 +384,8 @@ export interface Collection {
   combineAttachments?: boolean
   /** Drop email signature graphics + footer boilerplate when rendering to PDF. */
   excludeSignatures?: boolean
+  /** Attachment filenames to exclude from the production (routed to Excluded/). */
+  excludeAttachments?: string[]
   /** Whether to enrich each doc with a Claude-generated summary/type/parties. */
   aiEnrich: boolean
   /** Production artifacts produced on the last run. */
@@ -442,6 +448,7 @@ export interface CreateCollectionInput {
   bates?: { prefix: string; start: number }
   combineAttachments?: boolean
   excludeSignatures?: boolean
+  excludeAttachments?: string[]
   aiEnrich: boolean
 }
 

@@ -67,5 +67,14 @@ check('page rendered', hr[0][1] === '3')
 check('null page → blank', hr[1][1] === '')
 check('colour passthrough', hr[1][2] === '#00ff00')
 
+console.log('excludedSummary (consistency by content hash):')
+const es = m.excludedSummary
+check('byte-identical copies → consistent', es([{ name: 'logo.png', hash: 'a' }, { name: 'logo.png', hash: 'a' }]).inconsistentNames === 0)
+check('same name, different hash → inconsistent', es([{ name: 'x.pdf', hash: 'a' }, { name: 'x.pdf', hash: 'b' }]).inconsistentNames === 1)
+check('same size but different hash still flagged', es([{ name: 'y.png', hash: 'h1' }, { name: 'y.png', hash: 'h2' }]).inconsistentNames === 1)
+check('grouping is case-insensitive', es([{ name: 'A.PDF', hash: 'a' }, { name: 'a.pdf', hash: 'b' }]).inconsistentNames === 1)
+check('total counts every copy', es([{ name: 'a', hash: '1' }, { name: 'a', hash: '1' }, { name: 'b', hash: '2' }]).total === 3)
+check('empty → zero', es([]).total === 0 && es([]).inconsistentNames === 0)
+
 console.log('\n' + (ok ? 'ALL PASS ✓' : 'FAILURES ✗'))
 process.exit(ok ? 0 : 1)
