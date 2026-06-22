@@ -56,10 +56,39 @@ export async function listCollections(): Promise<Collection[]> {
   return out.sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
+// One-time self-heal: an earlier build stored attachment exclude/keep pointers with the
+// produced item-number prefix baked in (e.g. "0097 - image004.png|213049"). Those don't
+// resolve against the original attachment names, so the rules silently did nothing and the
+// tree couldn't flag matching copies. Strip the leading item-number prefix from every stored
+// pointer (and attachmentPaths key) when item numbering is on, deduping any collisions.
+const ITEMNO_RE = /^\d+ - /
+function healItemNumberedPointers(c: Collection): boolean {
+  if (!c.itemNumbering) return false
+  let changed = false
+  const strip = (s: string): string => {
+    const f = s.replace(ITEMNO_RE, '')
+    if (f !== s) changed = true
+    return f
+  }
+  const dedupe = (arr?: string[]): string[] | undefined => (Array.isArray(arr) ? Array.from(new Set(arr.map(strip))) : arr)
+  c.excludeFingerprints = dedupe(c.excludeFingerprints)
+  c.keepAttachments = dedupe(c.keepAttachments)
+  c.excludeAttachments = dedupe(c.excludeAttachments)
+  if (c.attachmentPaths && typeof c.attachmentPaths === 'object') {
+    const next: Record<string, string> = {}
+    for (const [k, v] of Object.entries(c.attachmentPaths)) next[strip(k)] = v
+    c.attachmentPaths = next
+  }
+  return changed
+}
+
 export async function getCollection(id: string): Promise<Collection | null> {
   const f = path.join(collPath(id), 'collection.json')
   if (!existsSync(f)) return null
-  return JSON.parse(await fs.readFile(f, 'utf8')) as Collection
+  const c = JSON.parse(await fs.readFile(f, 'utf8')) as Collection
+  // Persist the healed form once so every later read (and the renderer's stored sets) is clean.
+  if (healItemNumberedPointers(c)) await writeJson(f, c).catch(() => {})
+  return c
 }
 
 export async function saveCollection(c: Collection): Promise<void> {

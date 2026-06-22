@@ -32,6 +32,13 @@ export function cancelIndex(collectionId: string): void {
   cancelled.add(collectionId)
 }
 
+/** Whether a run is actually in flight for this set in THIS process. After an app restart
+ *  the set is empty, so a collection persisted as 'indexing' is an orphaned (interrupted)
+ *  run, not a live one — callers use this to heal that stale status. */
+export function isRunning(collectionId: string): boolean {
+  return running.has(collectionId)
+}
+
 export function pauseIndex(collectionId: string): void {
   paused.add(collectionId)
 }

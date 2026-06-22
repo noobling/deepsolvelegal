@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import type { ParsedMail, Attachment } from 'mailparser'
 
 // Build a clean, Mac-Mail-like HTML document for an email: a styled header
@@ -58,65 +59,17 @@ const CSS = `
   .dsl-atts .f { color: #515154; }
 `
 
-/** Width/height from a PNG/GIF/JPEG buffer header, or null if not parseable. */
-function imageSize(buf: Buffer): { w: number; h: number } | null {
-  if (buf.length >= 24 && buf[0] === 0x89 && buf[1] === 0x50) {
-    return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) } // PNG
-  }
-  if (buf.length >= 10 && buf[0] === 0x47 && buf[1] === 0x49) {
-    return { w: buf.readUInt16LE(6), h: buf.readUInt16LE(8) } // GIF
-  }
-  if (buf.length >= 4 && buf[0] === 0xff && buf[1] === 0xd8) {
-    let i = 2 // JPEG: walk markers to the start-of-frame for dimensions
-    while (i + 9 < buf.length) {
-      if (buf[i] !== 0xff) {
-        i++
-        continue
-      }
-      const m = buf[i + 1]
-      if (m >= 0xc0 && m <= 0xc3) return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7) }
-      if (m === 0xd8 || m === 0xd9 || m === 0x01 || (m >= 0xd0 && m <= 0xd7)) {
-        i += 2
-        continue
-      }
-      i += 2 + buf.readUInt16BE(i + 2)
-    }
-  }
-  return null
-}
-
 /**
- * Whether an inline image is a signature graphic (company logo, social icon) vs.
- * content (a photo, screenshot, or floor plan — which must be preserved as it may
- * be evidence). Signatures are small in BOTH bytes and pixels; anything sizeable
- * in either is kept.
+ * Content identity of an attachment: sha256 of its bytes. Exclusion is content-based,
+ * not filename-based — the same logo re-attached under different names (image001.png,
+ * logo.png, …) hashes identically, and two unrelated files that happen to share a name
+ * don't collide. production.ts resolves every rule into sets of these hashes; the matcher
+ * below just checks membership. Empty buffers hash to a constant — harmless (never matched).
  */
-export function isSignatureGraphic(buf?: Buffer, filename?: string): boolean {
-  if (!buf || !buf.length) return false
-  // Camera / screenshot / descriptive filenames are user content — never strip,
-  // even when small (a phone photo can be a small thumbnail). Outlook's generic
-  // "imageNNN" auto-name is NOT excluded here (it's used for both logos and
-  // pasted screenshots), so those fall through to the size checks below.
-  const name = (filename || '').toLowerCase()
-  if (/img[-_ ]?\d|dsc\d|screenshot|screen shot|photo|capture|whatsapp|\.heic|\d{8}/.test(name)) return false
-  const bytes = buf.length
-  if (bytes >= 150 * 1024) return false // clearly a photo
-  const d = imageSize(buf)
-  const maxDim = d ? Math.max(d.w, d.h) : null
-  if (maxDim != null && maxDim >= 800) return false // large dimensions → screenshot / diagram
-  // Small in bytes and pixels → a logo or social icon (a signature graphic).
-  if (bytes <= 40 * 1024) return true
-  return maxDim != null && maxDim <= 650 // a mid-size logo with small dimensions
-}
-
-/**
- * Set-wide identity of an image attachment (filename + exact byte size). A real
- * signature logo is the same file re-attached to many emails, so this fingerprint
- * repeats across the set; a one-off photo does not. production.ts prescans the set,
- * counts fingerprints, and passes back the ones that recur (see recurringImageFps).
- */
-export function attFingerprint(filename = '', size = 0): string {
-  return filename.trim().toLowerCase() + '|' + size
+export function attSha(buf?: Buffer): string {
+  return createHash('sha256')
+    .update(buf ?? Buffer.alloc(0))
+    .digest('hex')
 }
 
 /** Attachments smaller than this rarely carry substantive content (empty MIME
@@ -125,25 +78,19 @@ export function attFingerprint(filename = '', size = 0): string {
 export const SMALL_ATTACHMENT_BYTES = 3 * 1024
 
 /**
- * Whether a file attachment is likely non-substantive and can be set aside for
- * review (Excluded/) rather than produced. Signals, all gated on excludeSignatures:
- *  - any very small file (< SMALL_ATTACHMENT_BYTES), regardless of type;
- *  - an image that is a logo/icon by itself (small in bytes AND pixels — keeps
- *    photos/screenshots) OR whose fingerprint recurs across the set (a signature
- *    graphic re-attached to many emails — caught regardless of its individual size).
+ * Whether a file attachment is non-substantive *by itself* and can be set aside for
+ * review (Excluded/) rather than produced. Set-wide recurring logos are handled
+ * separately (resolved to sha256 in production.ts, passed in as autoLogoShas); this
+ * covers the only remaining per-attachment signal, gated on excludeSignatures:
+ *  - any very small file (< SMALL_ATTACHMENT_BYTES), regardless of type.
+ * (A size/pixel "looks like a logo" guess was removed — it set aside too many genuine
+ * small photos; only exact set-wide repetition now flags an image as a signature logo.)
  * Excluding only sets a file aside for review — it is never deleted.
  */
-export function isInsignificantAttachment(
-  a: Attachment,
-  opts: { excludeSignatures?: boolean; recurringImageFps?: Set<string> }
-): boolean {
+export function isInsignificantAttachment(a: Attachment, opts: { excludeSignatures?: boolean }): boolean {
   if (!opts.excludeSignatures) return false
   const size = a.content?.length || 0
   if (size > 0 && size < SMALL_ATTACHMENT_BYTES) return true
-  if (a.contentType?.startsWith('image/')) {
-    if (isSignatureGraphic(a.content, a.filename)) return true
-    if (opts.recurringImageFps?.has(attFingerprint(a.filename, size))) return true
-  }
   return false
 }
 
@@ -166,34 +113,36 @@ export function buildEmailHtml(
   mail: ParsedMail,
   opts: {
     excludeSignatures?: boolean
-    /** Exclude every attachment with one of these names (all instances, any size). */
-    excludeAttachments?: string[]
-    /** Exclude only attachments matching one of these fingerprints (name|size) — "this file". */
-    excludeFingerprints?: Set<string>
-    recurringImageFps?: Set<string>
-    /** Attachment fingerprints (name|size) the user restored — never exclude these. */
-    keepAttachments?: Set<string>
+    /** sha256 of attachments the user manually excluded ("exclude this + everything similar"
+     *  — resolved from content in production.ts). Preserved to Excluded/ for review. */
+    excludeShas?: Set<string>
+    /** sha256 of recurring signature logos auto-detected across the set (3+ exact copies,
+     *  small). Attached ones are set aside in Excluded/; inline ones are dropped silently
+     *  rather than saved. Only populated when excludeSignatures is on. */
+    autoLogoShas?: Set<string>
+    /** sha256 of attachments the user restored — always kept, overrides every rule. */
+    keepShas?: Set<string>
     /** Keep every attachment with one of these names (overrides exclusion, any size). */
     keepNames?: Set<string>
   } = {}
 ): { html: string; fileAttachments: Attachment[]; excludedAttachments: Attachment[] } {
   const atts = (mail.attachments || []) as Attachment[]
   const excludeSignatures = !!opts.excludeSignatures
-  const recurringImageFps = opts.recurringImageFps
-  const keepFps = opts.keepAttachments
+  const excludeShas = opts.excludeShas
+  const autoLogoShas = opts.autoLogoShas
+  const keepShas = opts.keepShas
   const keepNames = opts.keepNames
   const nameOf = (a: Attachment): string => (a.filename || '').trim().toLowerCase()
-  // A "keep" override wins over every exclusion rule. It can be pinned per-file
-  // (by fingerprint) or for all files of a name.
-  const isKept = (a: Attachment): boolean =>
-    !!keepFps?.has(attFingerprint(a.filename, a.content?.length || 0)) || !!keepNames?.has(nameOf(a))
-  const excludeNames = new Set((opts.excludeAttachments || []).map((s) => s.trim().toLowerCase()).filter(Boolean))
-  const excludeFps = opts.excludeFingerprints
-  // An attachment the user explicitly set aside (by name or by file fingerprint), unless
-  // a keep rule overrides it. Checked for INLINE images too, so an excluded image that's
-  // embedded in the body via cid: is stripped — not just the ones attached as files.
-  const isUserExcluded = (a: Attachment): boolean =>
-    !isKept(a) && (excludeNames.has(nameOf(a)) || !!excludeFps?.has(attFingerprint(a.filename, a.content?.length || 0)))
+  const shaOf = (a: Attachment): string => attSha(a.content)
+  // A "keep" override wins over every exclusion rule. Pinned by content (sha256) for the
+  // exact restored file, or by name for "keep all of this name".
+  const isKept = (a: Attachment): boolean => !!keepShas?.has(shaOf(a)) || !!keepNames?.has(nameOf(a))
+  // An attachment the user manually excluded — matched by content, so renamed/re-encoded
+  // copies are caught too. Checked for INLINE images as well, so an excluded image embedded
+  // in the body via cid: is stripped, not just the ones attached as files.
+  const isUserExcluded = (a: Attachment): boolean => !isKept(a) && !!excludeShas?.has(shaOf(a))
+  // An auto-detected recurring signature logo (set-wide, resolved to sha256 upstream).
+  const isAutoLogo = (a: Attachment): boolean => excludeSignatures && !isKept(a) && !!autoLogoShas?.has(shaOf(a))
   let body = typeof mail.html === 'string' && mail.html ? mail.html : mail.textAsHtml || '<p>(no message body)</p>'
 
   // Apple Mail interleaves several full <html>…</html> documents (one per inline
@@ -237,11 +186,12 @@ export function buildEmailHtml(
     const a = byId.get(cid) || orderMap.get(cid)
     if (a && a.contentType?.startsWith('image/')) {
       embedded.add(a)
-      const recurringLogo = !!recurringImageFps?.has(attFingerprint(a.filename, a.content?.length || 0))
       const userExcluded = isUserExcluded(a)
-      if (userExcluded || (excludeSignatures && !isKept(a) && (isSignatureGraphic(a.content, a.filename) || recurringLogo))) {
-        // Drop signature logos / social icons, and any image the user excluded, entirely
-        // (content photos are kept). Keep an excluded image for review in Excluded/.
+      const autoDrop = isAutoLogo(a)
+      if (userExcluded || autoDrop) {
+        // Drop auto-detected recurring logos (the same image repeated set-wide) and any
+        // image the user excluded, entirely. A manually excluded image is kept for review
+        // in Excluded/; an auto-detected recurring logo is dropped silently.
         body = body.replace(new RegExp('<img[^>]*cid:' + escRe(cid) + '[^>]*>', 'gi'), '')
         body = body.split('cid:' + cid).join(TRANSPARENT_PX)
         if (userExcluded) excludedInline.push(a)
@@ -265,17 +215,14 @@ export function buildEmailHtml(
     body = body.replace(/(?:<br\b[^>]*\/?>\s*){3,}/gi, '<br><br>')
   }
 
-  // Attachments not embedded inline, split into kept vs. set-aside: excluded by
-  // filename, or auto-detected as insignificant (a signature logo/icon). A restored
-  // attachment (its fingerprint in keepAttachments) is always kept — this overrides
-  // both the filename rule and the signature/recurring detection so it isn't set
-  // aside again on the next run.
+  // Attachments not embedded inline, split into kept vs. set-aside: manually excluded
+  // (by content — this file and everything similar), an auto-detected recurring logo, or
+  // insignificant by itself (a tiny file under 3 KB). A restored attachment (its sha256 in
+  // keepShas) is always kept — this overrides every exclusion rule so it isn't set aside
+  // again on the next run.
   const allAttachments = atts.filter((a) => !embedded.has(a))
   const isExcluded = (a: Attachment): boolean =>
-    !isKept(a) &&
-    (excludeNames.has(nameOf(a)) ||
-      !!excludeFps?.has(attFingerprint(a.filename, a.content?.length || 0)) ||
-      isInsignificantAttachment(a, { excludeSignatures, recurringImageFps }))
+    !isKept(a) && (isUserExcluded(a) || isAutoLogo(a) || isInsignificantAttachment(a, { excludeSignatures }))
   // Excluded = file attachments that match a rule, PLUS inline images the user excluded
   // (already stripped from the body above). Both get set aside in Excluded/.
   const excludedAttachments = [...allAttachments.filter(isExcluded), ...excludedInline]

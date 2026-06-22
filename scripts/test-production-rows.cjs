@@ -101,30 +101,28 @@ check('screenshot filename protected even if small-ish', ins(att(8 * 1024, 'imag
 check('large image kept (content photo)', ins(att(200 * 1024, 'image/png', 'banner.png'), { excludeSignatures: true }) === false)
 check('non-tiny non-image with excludeSignatures → kept', ins(att(8 * 1024, 'application/pdf', 'doc.pdf'), { excludeSignatures: true }) === false)
 
-console.log('recurring-logo detection (set-wide repeat):')
-const fp = eh.attFingerprint
-check('fingerprint is name|size, case-insensitive', fp('Logo.PNG', 1234) === 'logo.png|1234')
-const recur = new Set([fp('banner.png', 200 * 1024)])
-check('large recurring image → set aside (beats size heuristic)', ins(att(200 * 1024, 'image/png', 'banner.png'), { excludeSignatures: true, recurringImageFps: recur }) === true)
-check('same image, NOT in recurring set → kept', ins(att(200 * 1024, 'image/png', 'banner.png'), { excludeSignatures: true, recurringImageFps: new Set() }) === false)
-check('recurring image needs excludeSignatures', ins(att(200 * 1024, 'image/png', 'banner.png'), { recurringImageFps: recur }) === false)
-check('recurring set ignores non-images', ins(att(200 * 1024, 'application/pdf', 'banner.png'), { excludeSignatures: true, recurringImageFps: recur }) === false)
+console.log('content identity (sha256, replaces name|size fingerprint):')
+const sha = eh.attSha
+check('same bytes → same hash (content-based, ignores filename)', sha(Buffer.from('logo-bytes')) === sha(Buffer.from('logo-bytes')))
+check('different bytes → different hash', sha(Buffer.from('logo-bytes')) !== sha(Buffer.from('other-bytes')))
+check('hash is 64 hex chars (sha256)', /^[0-9a-f]{64}$/.test(sha(Buffer.from('x'))))
+check('empty/undefined buffer is safe (constant hash)', sha() === sha(Buffer.alloc(0)))
 
-console.log('per-doc exclude/restore invalidation (targeted re-render):')
+console.log('per-doc exclude/restore invalidation (sha-keyed targeted re-render):')
 const sd = m.symmetricDiff
-const aff = m.docExcludeAffected
 check('symmetricDiff finds the flipped entry', [...sd(['a', 'b'], ['a', 'c'])].sort().join(',') === 'b,c')
 check('symmetricDiff empty when identical', sd(['a', 'b'], ['b', 'a']).size === 0)
-// A logo email: attachments logo.png|1000 and report.pdf|50000.
-const keys = ['logo.png|1000', 'report.pdf|50000']
-check('no change → not affected', aff(keys, new Set(), new Set()) === false)
-check('excluding a name this doc has → affected', aff(keys, new Set(['logo.png']), new Set()) === true)
-check('excluding a name this doc lacks → not affected', aff(keys, new Set(['other.png']), new Set()) === false)
-check('restoring a fingerprint this doc has → affected', aff(keys, new Set(), new Set(['logo.png|1000'])) === true)
-check('restoring a same-name DIFFERENT size → not affected', aff(keys, new Set(), new Set(['logo.png|9999'])) === false)
-check('doc with no attachments → never affected', aff([], new Set(['logo.png']), new Set(['logo.png|1000'])) === false)
-check('pre-feature manifest (no keys) + a change → affected (safe re-render)', aff(undefined, new Set(['logo.png']), new Set()) === true)
-check('pre-feature manifest (no keys) + no change → not affected', aff(undefined, new Set(), new Set()) === false)
+// New model: a doc re-renders iff one of its attachment shas is in the changed-decision set
+// (production.ts: prev.attKeys?.some(sha => changedShas.has(sha))). Mirror that here.
+const affected = (attKeys, changed) => !!attKeys?.some((s) => changed.has(s))
+const shaA = sha(Buffer.from('A'))
+const shaB = sha(Buffer.from('B'))
+const docKeys = [shaA, shaB]
+check('no decision change → not affected', affected(docKeys, sd(['x'], ['x'])) === false)
+check('a sha this doc carries flipped → affected', affected(docKeys, new Set([shaA])) === true)
+check('a sha this doc lacks flipped → not affected', affected(docKeys, new Set([sha(Buffer.from('Z'))])) === false)
+check('doc with no attachments → never affected', affected([], new Set([shaA])) === false)
+check('pre-feature manifest (no keys) → not affected', affected(undefined, new Set([shaA])) === false)
 
 console.log('\n' + (ok ? 'ALL PASS ✓' : 'FAILURES ✗'))
 process.exit(ok ? 0 : 1)

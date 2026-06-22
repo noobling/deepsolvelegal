@@ -39,6 +39,32 @@ function mergeAttachmentPath(c: Collection, record?: { fp: string; path: string 
   for (const k of Object.keys(map)) if (!live.has(k)) delete map[k]
   c.attachmentPaths = map
 }
+
+// Apply an imported `.dslrules.json` to a collection in place. Only fields the file carries
+// are applied, so a partial/older file leaves settings it doesn't know about untouched.
+// Shared by importRules (into an existing set) and create (a new set built from a config).
+function applyRulesToCollection(c: Collection, rules: ProcessingRules): void {
+  const strList = (v: unknown): string[] =>
+    Array.isArray(v) ? Array.from(new Set(v.map((s) => String(s).trim()).filter(Boolean))) : []
+  if (rules.features) {
+    c.features = rules.features
+    c.aiEnrich = !!rules.features.aiEnrich
+  }
+  if ('bates' in rules) c.bates = rules.bates ?? undefined
+  c.combineAttachments = true // attachments are always merged into the email PDF now
+  if ('separateAttachments' in rules) c.separateAttachments = !!rules.separateAttachments
+  if ('itemNumbering' in rules) c.itemNumbering = !!rules.itemNumbering
+  if ('excludeSignatures' in rules) c.excludeSignatures = !!rules.excludeSignatures
+  if ('excludeAttachments' in rules) c.excludeAttachments = strList(rules.excludeAttachments)
+  if ('excludeFingerprints' in rules) c.excludeFingerprints = strList(rules.excludeFingerprints)
+  if ('keepAttachments' in rules) c.keepAttachments = strList(rules.keepAttachments)
+  if ('keepNames' in rules) c.keepNames = strList(rules.keepNames)
+  if (rules.attachmentPaths && typeof rules.attachmentPaths === 'object') {
+    // Keep only paths that still pair with a live fingerprint rule.
+    const live = new Set([...(c.keepAttachments ?? []), ...(c.excludeFingerprints ?? [])])
+    c.attachmentPaths = Object.fromEntries(Object.entries(rules.attachmentPaths).filter(([fp]) => live.has(fp)))
+  }
+}
 import { getProvider } from './agent/provider'
 import { createOllamaProvider } from './agent/ollama'
 import { cancel, sendMessage, startThread } from './agent/runAgent'
@@ -53,7 +79,8 @@ import {
   listCollections,
   saveCollection
 } from './library/store'
-import { buildIndex, cancelIndex, pauseIndex } from './library/indexer'
+import { buildIndex, cancelIndex, pauseIndex, isRunning } from './library/indexer'
+import { previewExcludedFingerprints, previewKeptFingerprints } from './export/production'
 import { searchCollection } from './library/search'
 import { extractText } from './library/extract'
 import { estimateTokens } from '@shared/pricing'
@@ -220,6 +247,53 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     out.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1))
     return out
   })
+  // Aggregate file/folder counts under a set of root paths (a source set's input
+  // folders, or the produced bundle). Counts descendants only: a directory passed as
+  // a root is the container shown in the tree, so it isn't itself tallied; a file
+  // passed as a root counts as one file. Dotfiles (.DS_Store, .restore-map.json …)
+  // are skipped, matching files:listDir. Walked natively with bounded concurrency so a
+  // deep produced tree counts in one fast round-trip instead of many renderer IPCs.
+  ipcMain.handle('files:countTree', async (_e, paths: string[]): Promise<{ files: number; folders: number }> => {
+    let files = 0
+    let folders = 0
+    const queue: string[] = []
+    for (const p of paths) {
+      try {
+        const s = await fs.stat(p)
+        if (s.isDirectory()) queue.push(p)
+        else files++
+      } catch {
+        /* unreadable root — skip */
+      }
+    }
+    let head = 0
+    let active = 0
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        if (head >= queue.length) {
+          if (active === 0) return
+          await new Promise((r) => setTimeout(r, 0))
+          continue
+        }
+        const dir = queue[head++]
+        active++
+        try {
+          const ents = await fs.readdir(dir, { withFileTypes: true }).catch(() => [])
+          for (const ent of ents) {
+            if (ent.name.startsWith('.')) continue
+            if (ent.isDirectory()) {
+              folders++
+              queue.push(path.join(dir, ent.name))
+            } else files++
+          }
+        } finally {
+          active--
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: 8 }, () => worker()))
+    return { files, folders }
+  })
   // Lightweight type/size probe for a path (used to render source roots as
   // either a folder or a single file in the explorer).
   ipcMain.handle('files:stat', async (_e, p: string): Promise<{ isDir: boolean; size: number } | null> => {
@@ -322,8 +396,25 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     getWindow()?.webContents.send('index:event', e)
   }
 
-  ipcMain.handle('library:list', () => listCollections())
-  ipcMain.handle('library:get', (_e, id: string) => getCollectionDetail(id))
+  // A set persisted as 'indexing' with no run actually in flight (this process never started
+  // one, or a prior run was interrupted by an app quit/crash) is stuck showing "processing…"
+  // forever. Heal it back to 'ready' so it's usable again; re-running re-processes as normal.
+  const healOrphanedStatus = async (c: Collection): Promise<void> => {
+    if (c.status === 'indexing' && !isRunning(c.id)) {
+      c.status = 'ready'
+      await saveCollection(c)
+    }
+  }
+  ipcMain.handle('library:list', async () => {
+    const cols = await listCollections()
+    for (const c of cols) await healOrphanedStatus(c)
+    return cols
+  })
+  ipcMain.handle('library:get', async (_e, id: string) => {
+    const c = await getCollection(id)
+    if (c) await healOrphanedStatus(c)
+    return getCollectionDetail(id)
+  })
   ipcMain.handle('library:delete', (_e, id: string) => {
     cancelIndex(id)
     return deleteCollection(id)
@@ -374,6 +465,29 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     await saveCollection(c)
     return getCollectionDetail(id)
   })
+  // The attachment fingerprints (name|size) the CURRENT rules would exclude — so the file
+  // tree can flag every matching copy (any filename) before a re-run. Content-based, so it
+  // covers renamed/re-encoded copies the renderer can't detect on its own.
+  ipcMain.handle('library:resolveExcluded', async (_e, id: string): Promise<string[]> => {
+    const c = await getCollection(id)
+    if (!c) return []
+    try {
+      return await previewExcludedFingerprints(c, await getDocs(id))
+    } catch {
+      return []
+    }
+  })
+  // Fingerprints the current KEEP rules would restore — including perceptually-similar
+  // copies — so the tree can show that restoring one excluded image restores its twins too.
+  ipcMain.handle('library:resolveKept', async (_e, id: string): Promise<string[]> => {
+    const c = await getCollection(id)
+    if (!c) return []
+    try {
+      return await previewKeptFingerprints(c, await getDocs(id))
+    } catch {
+      return []
+    }
+  })
   // Change which deliverables this set produces (review index, load file, highlights,
   // AI summaries, PDF conversion). Persisted now; the next re-run produces the newly
   // enabled outputs. Adding a report-only output (review index / load file / highlights)
@@ -382,6 +496,31 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const c = await getCollection(id)
     if (!c) return null
     c.features = features
+    await saveCollection(c)
+    return getCollectionDetail(id)
+  })
+
+  // Toggle whether an existing set ALSO keeps attachments as separate native files
+  // (they're always merged into the email PDF regardless). Persisted now; the next Re-run
+  // re-renders the production (the flag is in the production configKey, so toggling rebuilds
+  // every family and sweeps loose copies a prior "separate" run left behind). `combine` is
+  // accepted for signature stability but ignored — combining is always on.
+  ipcMain.handle('library:setAttachmentMode', async (_e, id: string, _combine: boolean, separate: boolean): Promise<CollectionDetail | null> => {
+    const c = await getCollection(id)
+    if (!c) return null
+    c.combineAttachments = true
+    c.separateAttachments = !!separate
+    await saveCollection(c)
+    return getCollectionDetail(id)
+  })
+
+  // Toggle per-family item-number prefixes on produced documents. Persisted now; the next
+  // Re-run re-renders the production (itemNumbering is in the configKey, so toggling renames
+  // every document and the sweep clears the old un-prefixed copies).
+  ipcMain.handle('library:setItemNumbering', async (_e, id: string, enabled: boolean): Promise<CollectionDetail | null> => {
+    const c = await getCollection(id)
+    if (!c) return null
+    c.itemNumbering = !!enabled
     await saveCollection(c)
     return getCollectionDetail(id)
   })
@@ -399,7 +538,9 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
         exportedAt: Date.now(),
         features: c.features,
         bates: c.bates ?? null,
-        combineAttachments: !!c.combineAttachments,
+        combineAttachments: true,
+        separateAttachments: !!c.separateAttachments,
+        itemNumbering: !!c.itemNumbering,
         excludeSignatures: !!c.excludeSignatures,
         excludeAttachments: c.excludeAttachments ?? [],
         excludeFingerprints: c.excludeFingerprints ?? [],
@@ -449,28 +590,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       await dialog.showMessageBox(win!, { type: 'error', message: 'Import failed', detail: error })
       return { ok: false, error }
     }
-    const strList = (v: unknown): string[] =>
-      Array.isArray(v) ? Array.from(new Set(v.map((s) => String(s).trim()).filter(Boolean))) : []
-    // Apply each field only if the file carries it (so partial/older files don't wipe
-    // settings they don't know about).
-    if (rules.features) {
-      c.features = rules.features
-      c.aiEnrich = !!rules.features.aiEnrich
-    }
-    if ('bates' in rules) c.bates = rules.bates ?? undefined
-    if ('combineAttachments' in rules) c.combineAttachments = !!rules.combineAttachments
-    if ('excludeSignatures' in rules) c.excludeSignatures = !!rules.excludeSignatures
-    if ('excludeAttachments' in rules) c.excludeAttachments = strList(rules.excludeAttachments)
-    if ('excludeFingerprints' in rules) c.excludeFingerprints = strList(rules.excludeFingerprints)
-    if ('keepAttachments' in rules) c.keepAttachments = strList(rules.keepAttachments)
-    if ('keepNames' in rules) c.keepNames = strList(rules.keepNames)
-    if (rules.attachmentPaths && typeof rules.attachmentPaths === 'object') {
-      // Keep only paths that still pair with a live fingerprint rule.
-      const live = new Set([...(c.keepAttachments ?? []), ...(c.excludeFingerprints ?? [])])
-      c.attachmentPaths = Object.fromEntries(
-        Object.entries(rules.attachmentPaths).filter(([fp]) => live.has(fp))
-      )
-    }
+    applyRulesToCollection(c, rules)
     await saveCollection(c)
     const ruleCount =
       (c.excludeAttachments?.length ?? 0) +
@@ -478,6 +598,28 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       (c.keepAttachments?.length ?? 0) +
       (c.keepNames?.length ?? 0)
     return { ok: true, detail: await getCollectionDetail(id), ruleCount }
+  })
+  // Pick + parse a `.dslrules.json` for the create dialog (no set exists yet). Returns the
+  // parsed rules so the renderer can pre-fill the form; the rules are applied to the new set
+  // when it's created (CreateCollectionInput.importedRules).
+  ipcMain.handle('library:pickRules', async () => {
+    const win = getWindow()
+    const res = await dialog.showOpenDialog(win!, {
+      title: 'Import processing rules',
+      properties: ['openFile'],
+      filters: [{ name: 'DeepSolve rules', extensions: ['dslrules.json', 'json'] }]
+    })
+    if (res.canceled || !res.filePaths[0]) return { ok: false, cancelled: true }
+    let rules: ProcessingRules
+    try {
+      rules = JSON.parse(await fs.readFile(res.filePaths[0], 'utf8'))
+    } catch {
+      return { ok: false, error: "That file isn't valid JSON, so it can't be a rules file." }
+    }
+    if (!rules || typeof rules !== 'object' || rules.version !== 1) {
+      return { ok: false, error: 'This file is not a DeepSolve rules file (version 1).' }
+    }
+    return { ok: true, rules, fileName: path.basename(res.filePaths[0]) }
   })
   ipcMain.handle('library:pickFolders', async () => {
     const win = getWindow()
@@ -529,11 +671,16 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       status: 'indexing',
       features,
       bates: input.bates,
-      combineAttachments: input.combineAttachments,
+      combineAttachments: true,
+      separateAttachments: input.separateAttachments,
+      itemNumbering: input.itemNumbering,
       excludeSignatures: input.excludeSignatures,
       excludeAttachments: input.excludeAttachments,
       aiEnrich: !!(input.aiEnrich || features?.aiEnrich)
     }
+    // A config imported in the create dialog carries the full attachment exclude/keep lists
+    // (which the form can't show); apply it over the freshly-built set so they're preserved.
+    if (input.importedRules && input.importedRules.version === 1) applyRulesToCollection(c, input.importedRules)
     await saveCollection(c)
     void buildIndex(id, emitIndex)
     return c

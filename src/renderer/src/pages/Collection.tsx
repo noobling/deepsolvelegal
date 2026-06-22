@@ -21,7 +21,9 @@ import {
   Sparkles,
   Check,
   ChevronDown,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Paperclip,
+  Hash
 } from 'lucide-react'
 
 const DEFAULT_FEATURES: ProcessFeatures = { emailToPdf: false, reviewIndex: false, loadFile: false, highlights: false, aiEnrich: false }
@@ -29,7 +31,23 @@ const DEFAULT_FEATURES: ProcessFeatures = { emailToPdf: false, reviewIndex: fals
 /** A dropdown to turn deliverables on/off after the first run, so a set can gain (or
  *  drop) a review index / production load file / highlights / AI summaries without being
  *  recreated. The change persists immediately; the next Re-run produces it. */
-function OutputsMenu({ features, busy, onChange }: { features: ProcessFeatures; busy: boolean; onChange: (f: ProcessFeatures) => void }): JSX.Element {
+function OutputsMenu({
+  features,
+  separate,
+  itemNumbering,
+  busy,
+  onChange,
+  onSeparate,
+  onItemNumbering
+}: {
+  features: ProcessFeatures
+  separate: boolean
+  itemNumbering: boolean
+  busy: boolean
+  onChange: (f: ProcessFeatures) => void
+  onSeparate: (separate: boolean) => void
+  onItemNumbering: (enabled: boolean) => void
+}): JSX.Element {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -81,6 +99,45 @@ function OutputsMenu({ features, busy, onChange }: { features: ProcessFeatures; 
               </button>
             )
           })}
+          {features.emailToPdf && (
+            <>
+              <div className="my-1 border-t border-ink-700/70" />
+              <div className="px-2 py-1.5 text-[11px] text-ink-600">Document handling — Re-run to re-render.</div>
+              {[
+                {
+                  on: separate,
+                  icon: <Paperclip className="w-3.5 h-3.5 text-accent" />,
+                  label: 'Save attachments separately',
+                  desc: 'Also write attachments as native files beside the PDF (they’re always merged into it too).',
+                  toggle: () => onSeparate(!separate)
+                },
+                {
+                  on: itemNumbering,
+                  icon: <Hash className="w-3.5 h-3.5 text-accent" />,
+                  label: 'Item numbers',
+                  desc: 'Prefix every document with a per-family number, e.g. 0001 - Smith Contract.pdf.',
+                  toggle: () => onItemNumbering(!itemNumbering)
+                }
+              ].map((it) => (
+                <button
+                  key={it.label}
+                  onClick={it.toggle}
+                  className="w-full flex items-start gap-2.5 px-2 py-1.5 rounded text-left hover:bg-ink-800"
+                >
+                  <span className={`mt-0.5 shrink-0 w-4 h-4 rounded border flex items-center justify-center ${it.on ? 'bg-accent border-accent' : 'border-ink-600'}`}>
+                    {it.on && <Check className="w-3 h-3 text-ink-950" />}
+                  </span>
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-1.5 text-[12.5px] text-slate-200">
+                      {it.icon}
+                      {it.label}
+                    </span>
+                    <span className="block text-[11px] text-ink-600 leading-snug">{it.desc}</span>
+                  </span>
+                </button>
+              ))}
+            </>
+          )}
         </div>
       )}
     </div>
@@ -96,6 +153,8 @@ export default function Collection(): JSX.Element {
     pauseCollection,
     resumeCollection,
     setFeatures,
+    setAttachmentMode,
+    setItemNumbering,
     setRoute
   } = useStore()
   const openHighlights = (): void => setRoute('highlights')
@@ -163,10 +222,20 @@ export default function Collection(): JSX.Element {
           {!indexing && !isPaused && (
             <OutputsMenu
               features={{ ...DEFAULT_FEATURES, ...(c.features ?? {}) }}
+              separate={!!c.separateAttachments}
+              itemNumbering={!!c.itemNumbering}
               busy={indexing}
               onChange={(f) => {
                 setOutputsDirty(true)
                 void setFeatures(f)
+              }}
+              onSeparate={(separate) => {
+                setOutputsDirty(true)
+                void setAttachmentMode(true, separate)
+              }}
+              onItemNumbering={(enabled) => {
+                setOutputsDirty(true)
+                void setItemNumbering(enabled)
               }}
             />
           )}

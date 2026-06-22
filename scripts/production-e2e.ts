@@ -6,8 +6,12 @@ import { app } from 'electron'
 import os from 'os'
 import path from 'path'
 import { promises as fs } from 'fs'
-import { writeExcludedFolder, intendedDirOf, sweepStaleOutputs, pdfFileName, dedupePdfExt } from '../src/main/export/production'
-import { buildEmailHtml } from '../src/main/export/emailHtml'
+import { writeExcludedFolder, intendedDirOf, sweepStaleOutputs, pdfFileName, dedupePdfExt, buildProduction } from '../src/main/export/production'
+import { buildEmailHtml, attSha } from '../src/main/export/emailHtml'
+import type { Collection, IndexedDoc, IndexEvent } from '@shared/types'
+import { simpleParser } from 'mailparser'
+import { createHash } from 'crypto'
+import { Jimp } from 'jimp'
 
 const log = (...a: unknown[]): void => process.stdout.write(a.join(' ') + '\n')
 
@@ -16,6 +20,10 @@ type Excluded = { name: string; size: number; content: Buffer; source: string }
 async function main(): Promise<void> {
   const tmp = path.join(os.tmpdir(), 'dsl-prod-e2e-' + process.pid)
   app.setPath('userData', path.join(tmp, 'userData'))
+  // buildProduction opens + destroys hidden render windows; the default window-all-closed
+  // handler would quit the app mid-test before we print the result. Keep it alive — we
+  // exit explicitly via app.exit() at the end.
+  app.on('window-all-closed', () => {})
   await app.whenReady()
 
   const outDir = path.join(tmp, 'Output')
@@ -112,11 +120,13 @@ async function main(): Promise<void> {
   await fs.writeFile(path.join(sharedDir, 'gone.pdf'), Buffer.alloc(300))
   await fs.writeFile(path.join(goneDir, 'gone.pdf'), Buffer.alloc(500))
   await fs.writeFile(path.join(goneDir, 'TPL4AL.pdf'), Buffer.alloc(169773))
-  // The current items: the kept email (own folder, TPL4AL + the 8192 report excluded) and
-  // the relocated email (now in the shared folder, all attachments excluded).
+  // The current items, each listing exactly the files it wrote into its folder (`files`).
+  // Sweep keeps those and removes everything else: the kept email's folder keeps its PDF +
+  // the 4096 report attachment (TPL4AL + the collision-prefixed _report go); the relocated
+  // email keeps only its PDF in the shared folder, orphaning the old gone/ folder entirely.
   const items = [
-    { fileRel: 'Documents/Mailbox/kept/kept.pdf', excluded: [{ name: 'TPL4AL.pdf', size: 169773 }, { name: 'report.pdf', size: 8192 }] },
-    { fileRel: 'Documents/Mailbox/gone.pdf', excluded: [{ name: 'TPL4AL.pdf', size: 169773 }] }
+    { fileRel: 'Documents/Mailbox/kept/kept.pdf', files: ['kept.pdf', 'report.pdf'] },
+    { fileRel: 'Documents/Mailbox/gone.pdf', files: ['gone.pdf'] }
   ]
   log('running sweepStaleOutputs…')
   await sweepStaleOutputs(sweepOut, items as Parameters<typeof sweepStaleOutputs>[1])
@@ -158,7 +168,7 @@ async function main(): Promise<void> {
     to: { text: 'c@d.com' }
   }
   const built = buildEmailHtml(inlineMail as Parameters<typeof buildEmailHtml>[0], {
-    excludeAttachments: ['Screen Shot 2018-05-07 at 9.38.28 AM.png']
+    excludeShas: new Set([attSha(exclImg)])
   })
   const exclB64 = exclImg.toString('base64')
   const keepB64 = keepImg.toString('base64')
@@ -181,10 +191,262 @@ async function main(): Promise<void> {
     to: { text: 'c@d.com' }
   }
   const built2 = buildEmailHtml(dataUriMail as Parameters<typeof buildEmailHtml>[0], {
-    excludeAttachments: ['Screen Shot 2018-05-07 at 9.38.28 AM.png']
+    excludeShas: new Set([attSha(exclImg)])
   })
   check('data-URI-embedded excluded image stripped from body', !built2.html.includes(exclB64))
   check('data-URI-embedded kept image preserved', built2.html.includes(keepB64))
+
+  // ── Full buildProduction over REAL emails (content-based exclusion end-to-end) ──
+  // Renders actual PDFs in this Electron process and exercises the new prescan → resolver
+  // → render → writeExcludedFolder path. Reads a local .eml folder (the user's APE set by
+  // default); skipped gracefully if it isn't present so the rest of the suite still runs.
+  const emlDir = process.env.DSL_E2E_EML_DIR || '/Users/davidyu/Downloads/sample-emails'
+  const listEml = async (d: string): Promise<string[]> => {
+    const out: string[] = []
+    for (const e of await fs.readdir(d, { withFileTypes: true }).catch(() => [])) {
+      const p = path.join(d, e.name)
+      if (e.isDirectory()) out.push(...(await listEml(p)))
+      else if (e.isFile() && e.name.toLowerCase().endsWith('.eml')) out.push(p)
+    }
+    return out
+  }
+  const allEml = await listEml(emlDir)
+  if (!allEml.length) {
+    log(`\nbuildProduction (real emails): SKIPPED — no .eml under ${emlDir} (set DSL_E2E_EML_DIR)`)
+  } else {
+    log(`\nbuildProduction (real emails): using ${emlDir}`)
+    const picked = allEml.slice(0, 30)
+    const docs: IndexedDoc[] = []
+    for (const p of picked) {
+      const st = await fs.stat(p)
+      docs.push({
+        id: createHash('sha1').update(p).digest('hex').slice(0, 16),
+        path: p,
+        name: path.basename(p),
+        ext: '.eml',
+        size: st.size,
+        modifiedAt: Math.floor(st.mtimeMs),
+        kind: 'email',
+        textChars: 0
+      })
+    }
+
+    // Find a recurring image attachment to drive the manual "exclude similar" test: the
+    // image sha that appears in the most of our picked emails, and its name|size pointer.
+    const seen = new Map<string, { count: number; name: string; size: number }>()
+    for (const p of picked) {
+      const mail = await simpleParser(await fs.readFile(p)).catch(() => null)
+      if (!mail) continue
+      const perEmail = new Set<string>()
+      for (const a of mail.attachments || []) {
+        if (!(a.contentType || '').startsWith('image/') || !a.content?.length) continue
+        const sha = createHash('sha256').update(a.content).digest('hex')
+        if (perEmail.has(sha)) continue
+        perEmail.add(sha)
+        const e = seen.get(sha) || { count: 0, name: (a.filename || '').trim().toLowerCase(), size: a.content.length }
+        e.count++
+        seen.set(sha, e)
+      }
+    }
+    const top = [...seen.values()].sort((a, b) => b.count - a.count)[0]
+    const pointer = top ? `${top.name}|${top.size}` : ''
+
+    const outDir2 = path.join(tmp, 'RealOutput')
+    const emit = (_e: IndexEvent): void => {}
+    const mkCollection = (over: Partial<Collection>): Collection =>
+      ({
+        id: 'e2e-real',
+        name: 'E2E Real',
+        folders: [emlDir],
+        output: outDir2,
+        createdAt: 0,
+        updatedAt: 0,
+        fileCount: docs.length,
+        status: 'ready',
+        aiEnrich: false,
+        separateAttachments: true, // write kept attachments as native files so they're scannable
+        features: { emailToPdf: true, reviewIndex: false, loadFile: false, highlights: false, aiEnrich: false },
+        ...over
+      }) as Collection
+
+    // Run A — auto-logo (excludeSignatures on, exact 3+ small). Renders real PDFs.
+    log('  run A: excludeSignatures on…')
+    const rA = await buildProduction(mkCollection({ excludeSignatures: true }), docs, emit, () => false)
+    log(`  run A → pdfCount=${rA.pdfCount} excludedAttachments=${rA.excludedAttachments} errors=${rA.errors.length}`)
+    check('run A produced PDFs for every email', rA.pdfCount === docs.length)
+    check('run A rendered without errors', rA.errors.length === 0)
+    check('run A set aside auto-detected logos', rA.excludedAttachments > 0)
+    const exclA = await fs.readdir(path.join(outDir2, 'Excluded')).catch(() => [] as string[])
+    check('run A wrote an Excluded/ folder', exclA.length > 0)
+    const docsA = await fs.readdir(path.join(outDir2, 'Documents')).catch(() => [] as string[])
+    check('run A wrote a Documents/ folder', docsA.length > 0)
+
+    // Run A′ — re-run unchanged: everything reused, nothing re-rendered (incremental cache).
+    log('  run A′: re-run unchanged…')
+    const rA2 = await buildProduction(mkCollection({ excludeSignatures: true }), docs, emit, () => false)
+    log(`  run A′ → processed=${rA2.processed} skipped=${rA2.skipped}`)
+    check('re-run reuses every doc (no re-render)', rA2.processed === 0 && rA2.skipped === docs.length)
+
+    // Run B — manual "exclude similar" (signatures OFF, so the only reason to exclude is the
+    // content rule). Proves the perceptual+exact resolver path through a real production.
+    if (pointer) {
+      log(`  run B: exclude similar to "${top.name}" (recurs in ${top.count} emails)…`)
+      const rB = await buildProduction(mkCollection({ excludeSignatures: false, excludeFingerprints: [pointer] }), docs, emit, () => false)
+      log(`  run B → excludedAttachments=${rB.excludedAttachments} errors=${rB.errors.length}`)
+      check('run B (manual exclude, signatures off) set aside the matched content', rB.excludedAttachments > 0)
+      check('run B rendered without errors', rB.errors.length === 0)
+      // The excluded image must no longer sit beside any produced email; it's in Excluded/.
+      const exclB = await fs.readdir(path.join(outDir2, 'Excluded')).catch(() => [] as string[])
+      check('run B Excluded/ folder present', exclB.length > 0)
+    } else {
+      log('  run B: SKIPPED — no recurring image attachment found in the sample')
+    }
+  }
+
+  // ── Same filename, DIFFERENT image → only the matching content is excluded ──
+  // The whole point of content-based matching: "exclude similar" must key on the image,
+  // not the filename. Craft four emails, all using the name "image001.png" or a different
+  // name but identical bytes, then exclude ONE image and assert the resolver excludes every
+  // copy of THAT image (even under a different name) while leaving a genuinely different
+  // image that happens to share the filename untouched.
+  log('\nsame-name / different-image exclusion (content-based):')
+  const genPng = async (w: number, h: number, fn: (x: number, y: number) => number): Promise<Buffer> => {
+    const img = new Jimp({ width: w, height: h, color: 0xffffffff })
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) img.setPixelColor(fn(x, y) >>> 0, x, y)
+    return img.getBuffer('image/png')
+  }
+  // Use non-monotonic, low-frequency patterns: enough light/dark transitions for a
+  // distinctive (non-degenerate) dHash, and smooth enough to survive JPEG re-encoding.
+  // logoA and logoB are clearly different patterns AND different dimensions (so their
+  // name|size differ too — the realistic case). logoAvariant = logoA re-encoded to JPEG.
+  const grey = (v: number): number => {
+    const c = Math.max(0, Math.min(255, Math.round(v)))
+    return ((c << 24) | (c << 16) | (c << 8) | 0xff) >>> 0
+  }
+  const logoA = await genPng(64, 64, (x, y) => grey(128 + 100 * Math.sin(x / 5) * Math.cos(y / 7)))
+  const logoB = await genPng(96, 40, (x, y) => grey(128 + 110 * Math.sin(x / 3 + 1) * Math.sin(y / 4)))
+  const logoAvariant = await (await Jimp.read(logoA)).getBuffer('image/jpeg') // re-encode → similar, different bytes
+  const shaA = createHash('sha256').update(logoA).digest('hex')
+  const shaB = createHash('sha256').update(logoB).digest('hex')
+  log(`  logoA ${logoA.length}B (sha ${shaA.slice(0, 8)}), logoB ${logoB.length}B (sha ${shaB.slice(0, 8)}), logoAvariant ${logoAvariant.length}B`)
+  check('crafted images are genuinely different content', shaA !== shaB)
+
+  const makeEml = (subject: string, atts: Array<{ name: string; type: string; buf: Buffer }>): string => {
+    const b = 'BOUND' + subject.replace(/\W/g, '')
+    let s = `From: a@b.com\r\nTo: c@d.com\r\nSubject: ${subject}\r\nMIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary="${b}"\r\n\r\n`
+    s += `--${b}\r\nContent-Type: text/html\r\n\r\n<p>body ${subject}</p>\r\n`
+    for (const a of atts)
+      s += `--${b}\r\nContent-Type: ${a.type}; name="${a.name}"\r\nContent-Transfer-Encoding: base64\r\nContent-Disposition: attachment; filename="${a.name}"\r\n\r\n${a.buf.toString('base64').replace(/(.{76})/g, '$1\r\n')}\r\n`
+    s += `--${b}--\r\n`
+    return s
+  }
+
+  const srcDir = path.join(tmp, 'samename-src')
+  await fs.mkdir(srcDir, { recursive: true })
+  // msg1: image001.png = logoA (the one we'll target)
+  // msg2: image001.png = logoB  (SAME NAME, different image — must be KEPT)
+  // msg3: company-logo.png = logoA (DIFFERENT name, same image — must be EXCLUDED)
+  // msg4: image001.png = logoAvariant (SAME NAME, re-encoded logoA — perceptual match, EXCLUDED)
+  const emls: Array<[string, Array<{ name: string; type: string; buf: Buffer }>]> = [
+    ['msg1', [{ name: 'image001.png', type: 'image/png', buf: logoA }]],
+    ['msg2', [{ name: 'image001.png', type: 'image/png', buf: logoB }]],
+    ['msg3', [{ name: 'company-logo.png', type: 'image/png', buf: logoA }]],
+    ['msg4', [{ name: 'image001.png', type: 'image/jpeg', buf: logoAvariant }]]
+  ]
+  const snDocs: IndexedDoc[] = []
+  for (const [name, atts] of emls) {
+    const p = path.join(srcDir, name + '.eml')
+    await fs.writeFile(p, makeEml(name, atts))
+    const st = await fs.stat(p)
+    snDocs.push({ id: name, path: p, name: name + '.eml', ext: '.eml', size: st.size, modifiedAt: Math.floor(st.mtimeMs), kind: 'email', textChars: 0 })
+  }
+
+  const snOut = path.join(tmp, 'samename-out')
+  const emit2 = (_e: IndexEvent): void => {}
+  const snCollection = {
+    id: 'e2e-samename',
+    name: 'samename',
+    folders: [srcDir],
+    output: snOut,
+    createdAt: 0,
+    updatedAt: 0,
+    fileCount: snDocs.length,
+    status: 'ready',
+    aiEnrich: false,
+    separateAttachments: true, // write kept attachments as native files so they're scannable
+    excludeSignatures: false, // only the manual rule acts
+    excludeFingerprints: [`image001.png|${logoA.length}`], // pointer to logoA (msg1)
+    features: { emailToPdf: true, reviewIndex: false, loadFile: false, highlights: false, aiEnrich: false }
+  } as Collection
+
+  log(`  excluding pointer image001.png|${logoA.length} (= logoA)…`)
+  const rSN = await buildProduction(snCollection, snDocs, emit2, () => false)
+  log(`  → excludedAttachments=${rSN.excludedAttachments} errors=${rSN.errors.length}`)
+
+  // Collect byte-lengths of every produced attachment (under Documents/) and every excluded
+  // one (under Excluded/), so we can assert by CONTENT (size is a proxy here since the three
+  // distinct images have distinct sizes).
+  const sizesUnder = async (dir: string): Promise<number[]> => {
+    const out: number[] = []
+    for (const e of await fs.readdir(dir, { withFileTypes: true }).catch(() => [])) {
+      const p = path.join(dir, e.name)
+      if (e.isDirectory()) out.push(...(await sizesUnder(p)))
+      else if (/\.(png|jpe?g)$/i.test(e.name)) out.push((await fs.stat(p)).size)
+    }
+    return out
+  }
+  const producedImgSizes = await sizesUnder(path.join(snOut, 'Documents'))
+  const excludedImgSizes = await sizesUnder(path.join(snOut, 'Excluded'))
+  log(`  produced image sizes: ${JSON.stringify(producedImgSizes)}`)
+  log(`  excluded image sizes: ${JSON.stringify(excludedImgSizes)}`)
+
+  check('logoA (targeted) is excluded', excludedImgSizes.includes(logoA.length))
+  check('logoA NOT left in the produced output', !producedImgSizes.includes(logoA.length))
+  check('logoB (same name "image001.png", DIFFERENT image) is KEPT in produced output', producedImgSizes.includes(logoB.length))
+  check('logoB (different image) is NOT excluded', !excludedImgSizes.includes(logoB.length))
+  check('logoA under a DIFFERENT name (company-logo.png) is also excluded (content match)', excludedImgSizes.includes(logoA.length))
+  check('logoAvariant (same name, re-encoded logoA) is excluded (perceptual match)', excludedImgSizes.includes(logoAvariant.length))
+  check('same-name run completed without errors', rSN.errors.length === 0)
+
+  // ── Auto-signature detection by PERCEPTUAL recurrence (re-encoded banner) ──
+  // The real-world failure: a covid/email banner recurs across many emails, but the mail
+  // client re-encodes it on every send, so no 3 copies are byte-identical. The old sha-only
+  // signature rule missed it entirely. Craft one banner, embed a SEPARATELY re-encoded JPEG
+  // copy (distinct bytes → distinct sha) in 4 emails, turn signatures ON (no manual rule),
+  // and assert every copy is set aside even though none share a sha.
+  log('\nauto-signature by perceptual recurrence (re-encoded banner, no byte-identical copies):')
+  const banner = await genPng(120, 40, (x, y) => grey(128 + 110 * Math.sin(x / 6) * Math.cos(y / 5)))
+  const variants: Buffer[] = []
+  for (let i = 0; i < 4; i++) {
+    const j = await Jimp.read(banner)
+    variants.push(await j.getBuffer('image/jpeg', { quality: 70 + i * 5 })) // each a different encode
+  }
+  const vShas = new Set(variants.map((b) => createHash('sha256').update(b).digest('hex')))
+  check('the 4 banner copies are byte-DISTINCT (old sha rule would miss them)', vShas.size === 4)
+  const sigSrc = path.join(tmp, 'sig-src')
+  await fs.mkdir(sigSrc, { recursive: true })
+  const sigDocs: IndexedDoc[] = []
+  for (let i = 0; i < 4; i++) {
+    const p = path.join(sigSrc, `sig${i}.eml`)
+    await fs.writeFile(p, makeEml(`sig${i}`, [{ name: `banner${i}.jpg`, type: 'image/jpeg', buf: variants[i] }]))
+    const st = await fs.stat(p)
+    sigDocs.push({ id: 'sig' + i, path: p, name: `sig${i}.eml`, ext: '.eml', size: st.size, modifiedAt: Math.floor(st.mtimeMs), kind: 'email', textChars: 0 })
+  }
+  const sigOut = path.join(tmp, 'sig-out')
+  const sigCollection = {
+    id: 'e2e-sig', name: 'sig', folders: [sigSrc], output: sigOut, createdAt: 0, updatedAt: 0,
+    fileCount: sigDocs.length, status: 'ready', aiEnrich: false, separateAttachments: true,
+    excludeSignatures: true, // signatures ON, NO manual exclude rule
+    features: { emailToPdf: true, reviewIndex: false, loadFile: false, highlights: false, aiEnrich: false }
+  } as Collection
+  const rSig = await buildProduction(sigCollection, sigDocs, (_e: IndexEvent) => {}, () => false)
+  log(`  → excludedAttachments=${rSig.excludedAttachments} errors=${rSig.errors.length}`)
+  const sigExcluded = await sizesUnder(path.join(sigOut, 'Excluded'))
+  const sigProduced = await sizesUnder(path.join(sigOut, 'Documents'))
+  log(`  excluded sizes: ${JSON.stringify(sigExcluded)}  produced image sizes: ${JSON.stringify(sigProduced)}`)
+  check('all 4 re-encoded banner copies set aside as a signature', rSig.excludedAttachments === 4)
+  check('no banner copy left in produced output', sigProduced.length === 0)
+  check('signature run completed without errors', rSig.errors.length === 0)
 
   const ok = checks.every(([, c]) => c)
   log('\n==== RESULT: ' + (ok ? 'PASS' : 'FAIL') + ' ====')

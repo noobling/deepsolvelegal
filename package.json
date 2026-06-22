@@ -24,6 +24,7 @@
     "@syncfusion/ej2-react-documenteditor": "^33.2.13",
     "docx": "^9.5.1",
     "exceljs": "^4.4.0",
+    "jimp": "^1.6.1",
     "mailparser": "^3.9.10",
     "mammoth": "^1.9.0",
     "pdf-lib": "^1.17.1",

@@ -4,7 +4,8 @@ import os from 'os'
 import path from 'path'
 import { simpleParser, type ParsedMail } from 'mailparser'
 import type { Collection, IndexedDoc, IndexEvent, ProcessFeatures, ProductionResult } from '@shared/types'
-import { buildEmailHtml, attFingerprint } from './emailHtml'
+import { buildEmailHtml, SMALL_ATTACHMENT_BYTES } from './emailHtml'
+import { sha256, dHash, hamming, DHASH_THRESHOLD, DHASH_VERSION, LOGO_MAX_BYTES } from './imageHash'
 import { combineFamily, makeRenderWindow, pageCount, renderInto, safeName, stampBates, toCsv, toDat, withTimeout } from './emailToPdf'
 
 // Merging attachments into a family PDF (pdf-lib) can grind for minutes on a big drawing
@@ -24,7 +25,6 @@ import {
   productionTargets,
   excludedSummary,
   symmetricDiff,
-  docExcludeAffected,
   type ProdRecord
 } from './productionRows'
 
@@ -43,18 +43,12 @@ type Emit = (e: IndexEvent) => void
 
 const PAD = 6
 
-// An image attachment whose fingerprint (name+size) appears in at least this many
-// emails is treated as a recurring signature logo, not a one-off picture.
+// An image attachment whose exact content (sha256) appears in at least this many emails
+// is treated as a recurring signature logo, not a one-off picture — provided it's also
+// small (<= LOGO_MAX_BYTES). 3+ byte-identical small copies across the set is a logo.
 const MIN_RECURRENCE = 3
 
 const addr = (v: ParsedMail['to']): string => (Array.isArray(v) ? v.map((t) => t.text).join('; ') : v?.text) || ''
-
-/** Cheap, stable string hash (djb2) for fingerprinting the recurring-logo set. */
-function hashStr(s: string): string {
-  let h = 5381
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0
-  return (h >>> 0).toString(36)
-}
 
 /** Filename + size of an excluded attachment (no content). */
 interface ExcludedMeta {
@@ -70,28 +64,48 @@ interface ProdItem extends ProdRecord {
   size: number
   /** Excluded attachments this doc contributed — so counts stay correct on re-runs. */
   excluded?: ExcludedMeta[]
-  /** Fingerprints (name|size) of this doc's non-embedded attachments — so an exclude/
-   *  restore change can re-render only the docs it actually touches. */
+  /** Content keys (sha256) of this doc's non-embedded attachments — so an exclude/restore
+   *  change (resolved to sha) can re-render only the docs it actually touches. */
   attKeys?: string[]
+  /** Basenames this item wrote into its folder this run (the PDF + any separately-saved
+   *  native attachments). The sweep keeps exactly these and removes anything else in the
+   *  folder, so renamed/now-excluded/embedded-only files don't linger across runs. */
+  files?: string[]
+  /** Sequential per-family item number (1-based) when item numbering is on, else 0. Stored
+   *  so a re-run can tell when the number shifted (a doc was added/removed earlier) and the
+   *  filename prefix must be re-written. */
+  itemNo?: number
 }
 
-/** An attachment filtered out of the production by filename, kept for review. */
+/** An attachment filtered out of the production (by content), kept for review. */
 interface ExcludedAtt extends ExcludedMeta {
   content: Buffer
   /** The email it came from (relative path), for the listing. */
   source: string
 }
 
+/** The resolved, content-based exclusion decision for a run — sha256 sets the matcher
+ *  checks per attachment. Built once by the prescan (resolveExclusions) and threaded
+ *  through every render + excluded-collection call so they all agree. */
+type ExclusionSets = {
+  excludeSignatures: boolean
+  /** Manually excluded ("this file + everything similar"), resolved from content. */
+  excludeShas: Set<string>
+  /** Auto-detected recurring signature logos (3+ exact small copies). */
+  autoLogoShas: Set<string>
+  /** Restored exact files (sha256) — override every rule. */
+  keepShas: Set<string>
+  /** "Keep all of this name" — name-scoped override. */
+  keepNames: Set<string>
+}
+
 /** Render-time options (no Bates — numbering is decided later, in order). */
-type RenderOpts = {
+type RenderOpts = ExclusionSets & {
   convert: boolean
   combine: boolean
-  excludeSignatures: boolean
-  excludeAttachments: string[]
-  excludeFingerprints: Set<string>
-  recurringImageFps: Set<string>
-  keepAttachments: Set<string>
-  keepNames: Set<string>
+  /** Also write kept attachments as separate native files beside the PDF. When combine
+   *  is off this is forced on (else the attachments would be lost). */
+  separate: boolean
 }
 
 /**
@@ -186,15 +200,15 @@ async function renderOne(
   let date = ''
   let attCount = 0
   let attNames = ''
-  // Fingerprints (name|size) of this doc's non-embedded attachments — lets a re-run
-  // tell whether an exclude/restore change actually touches this doc.
+  // Content keys (sha256) of this doc's non-embedded attachments — lets a re-run tell
+  // whether an exclude/restore change actually touches this doc.
   let attKeys: string[] = []
   let folder: string
   const attachments: { name: string; content: Buffer }[] = []
 
   if (ext === '.eml') {
     const mail = await simpleParser(await fs.readFile(doc.path))
-    const built = buildEmailHtml(mail, { excludeSignatures: opts.excludeSignatures, excludeAttachments: opts.excludeAttachments, excludeFingerprints: opts.excludeFingerprints, recurringImageFps: opts.recurringImageFps, keepAttachments: opts.keepAttachments, keepNames: opts.keepNames })
+    const built = buildEmailHtml(mail, { excludeSignatures: opts.excludeSignatures, excludeShas: opts.excludeShas, autoLogoShas: opts.autoLogoShas, keepShas: opts.keepShas, keepNames: opts.keepNames })
     // A render that fails or times out must not drop the email from the production (and
     // shift every Bates number after it): fall back to a slip-sheet placeholder + the
     // native .eml, exactly like an unrenderable document, so the sequence stays intact.
@@ -221,7 +235,7 @@ async function renderOne(
         }
       }
     }
-    // Excluded-by-filename attachments are routed to Excluded/, not the family folder.
+    // Excluded attachments are routed to Excluded/, not the family folder.
     for (const a of built.excludedAttachments) {
       const meta: ExcludedMeta = { name: a.filename || 'attachment', size: a.content.length }
       excludedMeta.push(meta)
@@ -234,8 +248,14 @@ async function renderOne(
     date = mail.date ? mail.date.toISOString().slice(0, 10) : ''
     attCount = built.fileAttachments.length
     attNames = built.fileAttachments.map((a) => a.filename || 'attachment').join('; ')
-    attKeys = [...built.fileAttachments, ...built.excludedAttachments].map((a) => attFingerprint(a.filename, a.content?.length || 0))
-    for (const a of built.fileAttachments) attachments.push({ name: a.filename || 'attachment', content: a.content })
+    // Content keys (sha256) of this doc's non-embedded attachments — lets a re-run tell
+    // whether a changed exclusion decision (resolved to sha) actually touches this doc.
+    attKeys = [...built.fileAttachments, ...built.excludedAttachments].map((a) => sha256(a.content ?? Buffer.alloc(0)))
+    // Attachments are always merged into the email PDF; they're ALSO written as separate
+    // native files only when asked (separate). When not, they live inside the PDF alone —
+    // the sweep removes any loose copy a prior "separate" run left behind.
+    const writeNative = opts.separate || !opts.combine
+    if (writeNative) for (const a of built.fileAttachments) attachments.push({ name: a.filename || 'attachment', content: a.content })
     // An email with attachments gets its own folder (PDF + native files together).
     folder = attCount > 0 ? path.join(docsRoot, relDir, base) : path.join(docsRoot, relDir)
   } else {
@@ -260,34 +280,38 @@ async function renderOne(
 }
 
 /**
- * Sweep stale files out of the produced Documents/ tree after a run, so the output
- * matches the current document set exactly. Earlier runs can leave two kinds of cruft
- * that a fresh render never cleans on its own:
- *   1. A now-excluded attachment that an earlier run wrote as a separate file beside its
- *      email PDF (excluding it routes it to Excluded/, but the old copy lingers).
- *   2. A whole orphaned folder: when an email's last kept attachment is excluded, its
- *      PDF moves from its own `…/<email>/` folder up to the shared parent, abandoning
- *      the old folder (old PDF + excluded attachment) entirely.
+ * Sweep stale files out of the produced Documents/ tree after a run, so the output matches
+ * the current document set exactly. The current `items` are the source of truth and each
+ * records the exact basenames it wrote into its folder (PDF + any separately-saved native
+ * attachments). So:
+ *   - a directory no item produces into is orphaned — every file in it goes (e.g. an email
+ *     whose last kept attachment was excluded, so its PDF moved up to the shared parent);
+ *   - inside a directory an item DOES produce into, any file NOT in that folder's produced
+ *     set goes (a now-excluded attachment routed to Excluded/, an attachment that's now
+ *     embedded-only, or a file left under an old naming scheme — e.g. before item-number
+ *     prefixes were turned on/off).
+ * Excluded/ lives outside Documents/, so it's never touched here.
  *
- * The current `items` are the source of truth. A directory that no item produces into
- * is orphaned — every file in it goes. Inside a directory an item DOES produce into, we
- * only remove files that positively match one of that folder's excluded attachments by
- * BOTH name and byte size, so a kept document (even one sharing a name) is never hit.
+ * SAFETY: a folder holding any item from before file-tracking (no `files`) is left fully
+ * alone, so we never delete output we can't positively account for.
  */
 export async function sweepStaleOutputs(outRoot: string, items: ProdItem[]): Promise<void> {
   const docsRoot = path.join(outRoot, 'Documents')
   const folderOf = (it: ProdItem): string => path.dirname(path.join(outRoot, it.fileRel))
-  // Every directory that legitimately holds produced output this run.
   const itemFolders = new Set(items.map((it) => folderOf(it).toLowerCase()))
-  // The excluded attachments belonging to each such folder (name|size), so a lingering
-  // copy can be matched against the safeName'd on-disk file.
-  const exclByFolder = new Map<string, { base: string; size: number }[]>()
+  // Allowed basenames per folder = exactly what this run wrote there. A folder with any
+  // pre-tracking item is marked untracked and skipped entirely.
+  const allowed = new Map<string, Set<string>>()
+  const untracked = new Set<string>()
   for (const it of items) {
-    if (!it.excluded?.length) continue
     const key = folderOf(it).toLowerCase()
-    const want = exclByFolder.get(key) ?? []
-    for (const e of it.excluded) want.push({ base: safeName(e.name), size: e.size })
-    exclByFolder.set(key, want)
+    if (!it.files) {
+      untracked.add(key)
+      continue
+    }
+    const set = allowed.get(key) ?? new Set<string>()
+    for (const f of it.files) set.add(f.toLowerCase())
+    allowed.set(key, set)
   }
 
   const walk = async (dir: string): Promise<void> => {
@@ -297,8 +321,9 @@ export async function sweepStaleOutputs(outRoot: string, items: ProdItem[]): Pro
     } catch {
       return
     }
-    const inItemFolder = itemFolders.has(dir.toLowerCase())
-    const want = exclByFolder.get(dir.toLowerCase()) ?? []
+    const key = dir.toLowerCase()
+    const inItemFolder = itemFolders.has(key)
+    const keep = allowed.get(key)
     for (const e of entries) {
       const p = path.join(dir, e.name)
       if (e.isDirectory()) {
@@ -307,21 +332,12 @@ export async function sweepStaleOutputs(outRoot: string, items: ProdItem[]): Pro
         continue
       }
       if (!inItemFolder) {
-        // No item produces here — the whole directory is orphaned (case 2).
+        // No item produces here — the whole directory is orphaned.
         await fs.rm(p, { force: true }).catch(() => {})
         continue
       }
-      if (!want.length) continue
-      let st: Awaited<ReturnType<typeof fs.stat>>
-      try {
-        st = await fs.stat(p)
-      } catch {
-        continue
-      }
-      const stripped = e.name.replace(/^_+/, '')
-      if (want.some((w) => (e.name === w.base || stripped === w.base) && st.size === w.size)) {
-        await fs.rm(p, { force: true }).catch(() => {}) // lingering excluded attachment (case 1)
-      }
+      if (untracked.has(key) || !keep) continue // can't account for it — leave it
+      if (!keep.has(e.name.toLowerCase())) await fs.rm(p, { force: true }).catch(() => {})
     }
   }
   await walk(docsRoot)
@@ -335,6 +351,15 @@ export async function sweepStaleOutputs(outRoot: string, items: ProdItem[]): Pro
  */
 export function pdfFileName(base: string): string {
   return /\.pdf$/i.test(base) ? base : base + '.pdf'
+}
+
+/** Decorate an attachment filename with its byte size + perceptual key, in the SAME shape
+ *  the Excluded/ folder uses: `name (NNN bytes, dh=HASH).ext` (dh=none when not an image or
+ *  not hashable). The file tree's undecorateName strips this back to `name.ext`, so exclude/
+ *  keep fingerprint matching is unaffected. */
+export function decorateAttKey(name: string, size: number, dh: string | null): string {
+  const ext = path.extname(name)
+  return `${path.basename(name, ext)} (${size} bytes, dh=${dh ?? 'none'})${ext}`
 }
 
 /** Collapse a doubled `.pdf.pdf` (case-insensitive on the trailing pair) to a single
@@ -376,20 +401,31 @@ async function writeRendered(
   prefix: string,
   assignBates: boolean,
   used: Set<string>,
-  result: ProductionResult
-): Promise<{ rec: ProdRecord; excludedMeta: ExcludedMeta[]; attKeys: string[] }> {
+  result: ProductionResult,
+  /** Item-number prefix prepended to every produced filename (e.g. `0001 - `); '' when off. */
+  itemPrefix: string,
+  /** sha256 → { perceptual key, is-image }, so produced IMAGE attachments can carry their
+   *  similarity key in the name, like the Excluded/ folder does (non-images stay clean). */
+  attKeyBySha: Map<string, { dh: string | null; img: boolean }>
+): Promise<{ rec: ProdRecord; excludedMeta: ExcludedMeta[]; attKeys: string[]; files: string[] }> {
   const batesLabel = (n: number): string => prefix + String(n).padStart(PAD, '0')
   await fs.mkdir(r.folder, { recursive: true })
-
-  if (r.native) {
-    let name = safeName(r.doc.name)
+  // Claim a collision-free name in the folder, recording it in `used`. The item prefix is
+  // applied first so a family's files share it; `_` only disambiguates a true clash.
+  const claim = (base: string): string => {
+    let name = itemPrefix + base
     while (used.has(path.join(r.folder, name).toLowerCase())) name = '_' + name
     used.add(path.join(r.folder, name).toLowerCase())
+    return name
+  }
+
+  if (r.native) {
+    const name = claim(safeName(r.doc.name))
     const outPath = path.join(r.folder, name)
     await fs.copyFile(r.doc.path, outPath)
     const beg = assignBates ? batesLabel(batesStart) : ''
     const rec: ProdRecord = { begBates: beg, endBates: beg, pages: 0, batesSpan: 1, date: r.date, from: r.from, to: r.to, cc: r.cc, subject: r.subject, docType: r.docType, kind: r.doc.kind, fileRel: path.relative(outRoot, outPath), attCount: r.attCount, attNames: r.attNames }
-    return { rec, excludedMeta: r.excludedMeta, attKeys: r.attKeys }
+    return { rec, excludedMeta: r.excludedMeta, attKeys: r.attKeys, files: [name] }
   }
 
   let pdf = r.pdf as Buffer
@@ -418,21 +454,27 @@ async function writeRendered(
     }
   }
 
-  let pdfName = pdfFileName(r.base)
-  while (used.has(path.join(r.folder, pdfName).toLowerCase())) pdfName = '_' + pdfName
-  used.add(path.join(r.folder, pdfName).toLowerCase())
+  const files: string[] = []
+  const pdfName = claim(pdfFileName(r.base))
+  files.push(pdfName)
   const outPath = path.join(r.folder, pdfName)
   await fs.writeFile(outPath, pdf)
 
   for (const a of attachments) {
-    let n = safeName(a.name)
-    while (used.has(path.join(r.folder, n).toLowerCase())) n = '_' + n
-    used.add(path.join(r.folder, n).toLowerCase())
+    // Decorate genuine email attachments with their size + similarity key (dh=…), matching
+    // the Excluded/ folder so you can eyeball why two attachments do or don't match. The
+    // file tree strips this decoration when computing fingerprints, so exclude/keep still
+    // work. Document natives (slip-sheet/spreadsheet copies) keep their real name.
+    const safe = safeName(a.name)
+    const k = r.doc.kind === 'email' ? attKeyBySha.get(sha256(a.content)) : undefined
+    const base = k?.img ? decorateAttKey(safe, a.content.length, k.dh) : safe
+    const n = claim(base)
+    files.push(n)
     await fs.writeFile(path.join(r.folder, n), a.content)
   }
 
   const rec: ProdRecord = { begBates, endBates, pages, batesSpan: pages, date: r.date, from: r.from, to: r.to, cc: r.cc, subject: r.subject, docType: r.docType, kind: r.doc.kind, fileRel: path.relative(outRoot, outPath), attCount: r.attCount, attNames: r.attNames }
-  return { rec, excludedMeta: r.excludedMeta, attKeys: r.attKeys }
+  return { rec, excludedMeta: r.excludedMeta, attKeys: r.attKeys, files }
 }
 
 /**
@@ -483,11 +525,7 @@ async function renderInParallel(
  * PDF render. Lets an incremental run keep the Excluded/ folder + map complete for docs
  * whose PDF was reused (only the affected docs are re-rendered).
  */
-async function collectExcluded(
-  doc: IndexedDoc,
-  rel: string,
-  opts: { excludeSignatures: boolean; excludeAttachments: string[]; excludeFingerprints: Set<string>; recurringImageFps: Set<string>; keepAttachments: Set<string>; keepNames: Set<string> }
-): Promise<ExcludedAtt[]> {
+async function collectExcluded(doc: IndexedDoc, rel: string, opts: ExclusionSets): Promise<ExcludedAtt[]> {
   if (doc.ext !== '.eml') return []
   try {
     const mail = await simpleParser(await fs.readFile(doc.path))
@@ -513,12 +551,16 @@ export function intendedDirOf(source: string): string {
 }
 
 /**
- * Write excluded attachments to <output>/Excluded/ for review. Copies of a filename
- * that are byte-for-byte identical (verified by content hash) collapse to one file —
- * that's the only sure test that they're the same. If a filename has more than one
- * distinct version, we DON'T assume they match: every version is written into a folder
- * named after the file (each tagged with its byte size) so the reviewer can compare
- * them. Called only on a full render, when every excluded attachment's content is in hand.
+ * Write excluded attachments to <output>/Excluded/ for review, GROUPED BY VISUAL
+ * SIMILARITY (not by filename). Byte-identical copies collapse to one file first (a
+ * content hash is the one sure test they're the same), then the distinct files are
+ * clustered perceptually: any two images whose dHashes are within DHASH_THRESHOLD bits
+ * land in the same cluster (union-find, so re-encoded copies of one logo group together
+ * even under different filenames). Files with no usable perceptual hash (non-images, or
+ * blank/divider images) stay in their own singleton cluster. Each cluster is written to
+ * its own "Group NN" folder so the reviewer can open it and confirm the grouping is
+ * correct. Called only on a full render, when every excluded attachment's content is in
+ * hand.
  */
 export async function writeExcludedFolder(outRoot: string, excluded: ExcludedAtt[]): Promise<void> {
   const dir = path.join(outRoot, 'Excluded')
@@ -526,13 +568,58 @@ export async function writeExcludedFolder(outRoot: string, excluded: ExcludedAtt
   if (!excluded.length) return
   await fs.mkdir(dir, { recursive: true })
 
-  const groups = new Map<string, ExcludedAtt[]>()
+  const hashOf = (b: Buffer): string => createHash('sha1').update(b).digest('hex')
+  const dirsOf = (sources: Set<string>): string[] => [...new Set([...sources].map(intendedDirOf))].sort()
+
+  // 1) Collapse byte-identical copies first. Each distinct file remembers every email it
+  //    came from, so a restore knows all the produced folders it belongs in.
+  const byContent = new Map<string, { rep: ExcludedAtt; sources: Set<string> }>()
   for (const e of excluded) {
-    const key = e.name.trim().toLowerCase()
-    const arr = groups.get(key)
-    if (arr) arr.push(e)
-    else groups.set(key, [e])
+    const k = hashOf(e.content)
+    const g = byContent.get(k)
+    if (g) g.sources.add(e.source)
+    else byContent.set(k, { rep: e, sources: new Set([e.source]) })
   }
+  const reps = [...byContent.values()]
+
+  // 2) Perceptual-hash each distinct file (images only); non-images / blanks get null.
+  const dhashes = await Promise.all(reps.map((r) => dHash(r.rep.content).catch(() => null)))
+
+  // 3) Cluster by visual similarity. Union any two images within DHASH_THRESHOLD bits;
+  //    files without a usable dHash stay singletons (only byte-identical copies merge,
+  //    and those were already collapsed in step 1).
+  const parent = reps.map((_, i) => i)
+  const find = (i: number): number => {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i]]
+      i = parent[i]
+    }
+    return i
+  }
+  const union = (a: number, b: number): void => {
+    const ra = find(a)
+    const rb = find(b)
+    if (ra !== rb) parent[ra] = rb
+  }
+  for (let i = 0; i < reps.length; i++) {
+    const di = dhashes[i]
+    if (!di) continue
+    for (let j = i + 1; j < reps.length; j++) {
+      const dj = dhashes[j]
+      if (dj && hamming(di, dj) <= DHASH_THRESHOLD) union(i, j)
+    }
+  }
+  const clustered = new Map<number, number[]>()
+  for (let i = 0; i < reps.length; i++) {
+    const root = find(i)
+    const arr = clustered.get(root)
+    if (arr) arr.push(i)
+    else clustered.set(root, [i])
+  }
+  // Largest clusters first (the ones most worth eyeballing), ties by representative name.
+  const groups = [...clustered.values()].sort(
+    (a, b) => b.length - a.length || reps[a[0]].rep.name.localeCompare(reps[b[0]].rep.name)
+  )
 
   // Never let two distinct files share an output path (odd characters in a filename, or
   // two copies with the same byte size) — disambiguate with a "_".
@@ -543,54 +630,387 @@ export async function writeExcludedFolder(outRoot: string, excluded: ExcludedAtt
     used.add(path.join(base, n).toLowerCase())
     return path.join(base, n)
   }
-  const hashOf = (b: Buffer): string => createHash('sha1').update(b).digest('hex')
-  const dirsOf = (sources: Set<string>): string[] => [...new Set([...sources].map(intendedDirOf))].sort()
 
-  // Collapse ONLY byte-identical copies of a filename — a content hash is the one sure
-  // test that two files are the same. If a name still has more than one distinct version,
-  // we can't assume they're the same file, so every version is written into a folder
-  // named after the file for the reviewer to compare (rather than silently dropping any).
-  // Each written file records the produced folder(s) a restore would put it back into.
+  // 4) Write one folder per similarity group, every distinct member inside it. The folder
+  //    name carries the member count, and each FILENAME carries its perceptual hash
+  //    (dh=…) so you can eyeball why two images did or didn't cluster — images within
+  //    DHASH_THRESHOLD differing bits are "similar". Non-images get dh=none (they only
+  //    merge with byte-identical copies). Each distinct file's group + dHash is recorded
+  //    so the listing and debug report below can reference them.
+  const pad = String(groups.length).length
   const restoreMap: Record<string, string[]> = {}
-  for (const items of groups.values()) {
-    const byHash = new Map<string, { rep: ExcludedAtt; sources: Set<string> }>()
-    for (const it of items) {
-      const g = byHash.get(hashOf(it.content))
-      if (g) g.sources.add(it.source)
-      else byHash.set(hashOf(it.content), { rep: it, sources: new Set([it.source]) })
-    }
-    const distinct = [...byHash.values()].sort((a, b) => a.rep.size - b.rep.size)
-    if (distinct.length === 1) {
-      // Every copy is byte-for-byte identical — one file, definitely the same.
-      const d = distinct[0]
-      const outPath = uniqueIn(dir, d.rep.name)
-      await fs.writeFile(outPath, d.rep.content)
-      restoreMap[path.basename(outPath)] = dirsOf(d.sources)
-    } else {
-      // Same name, different bytes — group every version in a folder to be checked.
-      const folder = uniqueIn(dir, path.basename(items[0].name))
-      await fs.mkdir(folder, { recursive: true })
-      for (const d of distinct) {
-        const ext = path.extname(d.rep.name)
-        const outPath = uniqueIn(folder, `${path.basename(d.rep.name, ext)} (${d.rep.size} bytes)${ext}`)
-        await fs.writeFile(outPath, d.rep.content)
-        restoreMap[path.basename(outPath)] = dirsOf(d.sources)
-      }
+  // Per distinct file (by content sha1) → its group number + dHash, for the listing/report.
+  const metaByContent = new Map<string, { group: number; dh: string }>()
+  let gi = 0
+  for (const members of groups) {
+    gi++
+    const folder = path.join(dir, `Group ${String(gi).padStart(pad, '0')} (${members.length} file${members.length === 1 ? '' : 's'})`)
+    await fs.mkdir(folder, { recursive: true })
+    for (const idx of members) {
+      const { rep, sources } = reps[idx]
+      const dh = dhashes[idx] ?? 'none'
+      const ext = path.extname(rep.name)
+      const outPath = uniqueIn(folder, `${path.basename(rep.name, ext)} (${rep.size} bytes, dh=${dh})${ext}`)
+      await fs.writeFile(outPath, rep.content)
+      restoreMap[path.basename(outPath)] = dirsOf(sources)
+      metaByContent.set(hashOf(rep.content), { group: gi, dh })
     }
   }
 
-  // The listing names every excluded image individually — one row per instance, each
-  // with the exact file it was removed from — so the same logo appearing across many
-  // emails stays fully traceable instead of collapsing into one joined "From emails" cell.
-  const listing: string[][] = [['Filename', 'Size (bytes)', 'Removed from']]
+  // The listing names every excluded image individually — one row per instance, each with
+  // the exact file it was removed from — so the same logo appearing across many emails
+  // stays fully traceable. Group + dHash columns let you sort/filter to see which files
+  // the clusterer thought were the same image and why.
+  const listing: string[][] = [['Group', 'Filename', 'Size (bytes)', 'dHash', 'Removed from']]
   for (const e of [...excluded].sort((a, b) => a.name.localeCompare(b.name) || a.source.localeCompare(b.source) || a.size - b.size)) {
-    listing.push([e.name, String(e.size), e.source])
+    const m = metaByContent.get(hashOf(e.content))
+    listing.push([m ? `Group ${String(m.group).padStart(pad, '0')}` : '?', e.name, String(e.size), m?.dh ?? 'none', e.source])
   }
 
   await fs.writeFile(path.join(dir, 'Excluded Attachments.xlsx'), await rowsToXlsx(listing, 'Excluded'))
+
+  // Debug report: for every pair of groups that have a perceptual hash, the SMALLEST
+  // Hamming distance between any image in one and any image in the other. Two groups whose
+  // nearest pair is just above DHASH_THRESHOLD are the near-misses — that's where you see
+  // why they stayed apart (e.g. "Group 01 ↔ Group 02 : 9" with threshold 8). Anything ≤
+  // threshold inside the SAME group; across groups it should always be > threshold.
+  const groupDh: { gi: number; rep: string; hashes: string[] }[] = groups.map((members, k) => ({
+    gi: k + 1,
+    rep: path.basename(reps[members[0]].rep.name),
+    hashes: members.map((idx) => dhashes[idx]).filter((h): h is string => !!h)
+  }))
+  const lines: string[] = []
+  lines.push(`Excluded-attachment similarity report`)
+  lines.push(`Threshold: two images within ${DHASH_THRESHOLD} differing bits (of 64) are grouped as the same image.`)
+  lines.push(``)
+  for (const g of groupDh) {
+    lines.push(`Group ${String(g.gi).padStart(pad, '0')} — ${g.rep}`)
+    for (const idx of groups[g.gi - 1]) {
+      lines.push(`    dh=${dhashes[idx] ?? 'none'}  ${reps[idx].rep.name} (${reps[idx].rep.size} bytes)`)
+    }
+  }
+  const pairs: { a: number; b: number; min: number }[] = []
+  for (let i = 0; i < groupDh.length; i++) {
+    for (let j = i + 1; j < groupDh.length; j++) {
+      if (!groupDh[i].hashes.length || !groupDh[j].hashes.length) continue
+      let min = 64
+      for (const ha of groupDh[i].hashes) for (const hb of groupDh[j].hashes) min = Math.min(min, hamming(ha, hb))
+      pairs.push({ a: groupDh[i].gi, b: groupDh[j].gi, min })
+    }
+  }
+  pairs.sort((x, y) => x.min - y.min)
+  if (pairs.length) {
+    lines.push(``)
+    lines.push(`Nearest distance between groups (closest first — anything ≤ ${DHASH_THRESHOLD} would have merged):`)
+    for (const p of pairs) {
+      const flag = p.min <= DHASH_THRESHOLD + 4 ? '   ← near-miss' : ''
+      lines.push(`    Group ${String(p.a).padStart(pad, '0')} ↔ Group ${String(p.b).padStart(pad, '0')} : ${p.min} bits${flag}`)
+    }
+  }
+  await fs.writeFile(path.join(dir, '_grouping-debug.txt'), lines.join('\n') + '\n')
   // Hidden sidecar (filtered from the explorer) the renderer reads to show, per excluded
   // file, the produced folder(s) a restore would land in.
   await fs.writeFile(path.join(dir, '.restore-map.json'), JSON.stringify(restoreMap))
+}
+
+// Per-doc cache of attachment content hashes (decoding images for the perceptual hash is
+// the expensive bit), keyed by the email's mtime/size so an incremental run only re-hashes
+// changed emails. `perceptual` records whether dHashes were computed, so a run that newly
+// needs them (a manual image exclude was added) re-hashes rather than reusing a sha-only entry.
+type AttHash = { sha: string; dhash: string | null; size: number; img: boolean; name: string }
+export type AttHashEntry = { mtime: number; size: number; perceptual: boolean; pv?: number; atts: AttHash[] }
+
+/** name|size identity of an attachment — the POINTER the UI stores and the key the file tree
+ *  marks by. Matching itself is by content (sha/dHash); this just maps a resolved content
+ *  decision back to the produced files so the renderer can flag every copy. */
+const fpOf = (name: string, size: number): string => name.trim().toLowerCase() + '|' + size
+
+// A conversation key for an email — its subject with reply/forward prefixes stripped. Used to
+// count how many DISTINCT conversations a recurring image spans: a true signature/logo recurs
+// across many unrelated conversations, whereas a content screenshot only recurs because it's
+// quoted down a single reply chain (same subject). Counting conversations instead of raw
+// emails stops thread-quoting from making genuine content look like a repeating signature.
+// A subjectless email is its own conversation (keyed by id) so signatures there stay catchable.
+const conversationKey = (doc: IndexedDoc): string => {
+  const s = (doc.subject || '')
+    .replace(/^((re|fwd|fw|aw|tr)\s*:\s*)+/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+  return s || 'id:' + doc.id
+}
+
+interface ResolvedExclusions {
+  excludeShas: Set<string>
+  autoLogoShas: Set<string>
+  keepShas: Set<string>
+  attHash: Record<string, AttHashEntry>
+  /** false when no rule needed a scan (sets empty, attHash untouched). */
+  scanned: boolean
+  /** Debug: one CSV row per distinct attachment — its similarity key (dHash), how many
+   *  distinct conversations it spans, and the exclusion decision + reason. Lets you see why
+   *  an image was or wasn't set aside (e.g. a logo that recurs in too few conversations). */
+  keyRows?: string[][]
+}
+
+/**
+ * Resolve a collection's exclude/keep rules into content (sha256) sets — shared by the
+ * production run and the UI "what would be excluded" preview so the two can't drift. Hashes
+ * each email's attachments (sha always; a perceptual dHash for images only when a manual
+ * image-exclude needs similarity), reusing the per-doc cache for unchanged emails.
+ *   - autoLogoShas: content recurring in >=MIN_RECURRENCE emails that is a small image.
+ *   - excludeShas:  manual exclusions expanded to every byte-identical + perceptually-similar copy.
+ *   - keepShas:     restored exact files, stripped back out of the exclusion sets (they win).
+ */
+async function resolveExclusions(
+  collection: Collection,
+  emails: IndexedDoc[],
+  savedAttHash: Record<string, AttHashEntry>,
+  emit?: Emit,
+  isCancelled: () => boolean = () => false
+): Promise<ResolvedExclusions> {
+  const excludePointers = new Set(collection.excludeFingerprints ?? [])
+  const keepPointers = new Set(collection.keepAttachments ?? [])
+  // Legacy by-name exclusions (the old "exclude all of this name" rule). Filename matching
+  // is gone, but we still honour any pre-existing name rules by resolving them to content.
+  const legacyExcludeNames = new Set((collection.excludeAttachments ?? []).map((s) => s.trim().toLowerCase()).filter(Boolean))
+  const needScan = !!collection.excludeSignatures || excludePointers.size > 0 || keepPointers.size > 0 || legacyExcludeNames.size > 0
+  // Similarity matching for BOTH manual excludes and manual keeps: excluding "this + every
+  // similar copy" and restoring "this + every similar copy" must be symmetric.
+  const needPerceptual = excludePointers.size > 0 || keepPointers.size > 0
+  // A perceptual dHash is needed for manual "exclude similar" AND for signature detection:
+  // a covid/email banner recurs across many emails but the mail client re-encodes it each
+  // time, so the copies aren't byte-identical (sha differs) — only the dHash consolidates them.
+  const needDhash = needPerceptual || !!collection.excludeSignatures
+  const attHash: Record<string, AttHashEntry> = {}
+  const excludeShas = new Set<string>()
+  const autoLogoShas = new Set<string>()
+  const keepShas = new Set<string>()
+  if (!needScan) return { excludeShas, autoLogoShas, keepShas, attHash, scanned: false }
+
+  const phase = needPerceptual ? 'Matching similar attachments' : 'Scanning for repeated logos'
+  emit?.({ type: 'index-progress', collectionId: collection.id, phase, done: 0, total: emails.length })
+  const hashDoc = async (doc: IndexedDoc): Promise<AttHash[]> => {
+    try {
+      const mail = await simpleParser(await fs.readFile(doc.path))
+      const out: AttHash[] = []
+      for (const a of mail.attachments || []) {
+        const buf = a.content
+        if (!buf || !buf.length) continue
+        const img = (a.contentType || '').startsWith('image/')
+        out.push({ sha: sha256(buf), dhash: img && needDhash ? await dHash(buf) : null, size: buf.length, img, name: (a.filename || '').trim().toLowerCase() })
+      }
+      return out
+    } catch {
+      return []
+    }
+  }
+  let next = 0
+  let done = 0
+  const pool = Math.max(2, Math.min(emails.length || 1, os.cpus().length || 4))
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      if (isCancelled()) return
+      const idx = next++
+      if (idx >= emails.length) return
+      const doc = emails[idx]
+      const cached = savedAttHash[doc.id]
+      // Reuse the cached hashes only if the file is unchanged AND (dHashes aren't needed, or
+      // they were computed by the CURRENT dHash version — else recompute to pick up decode fixes).
+      const reusable =
+        cached && cached.mtime === doc.modifiedAt && cached.size === doc.size && (!needDhash || (cached.perceptual && cached.pv === DHASH_VERSION))
+      attHash[doc.id] = reusable ? cached : { mtime: doc.modifiedAt, size: doc.size, perceptual: needDhash, pv: DHASH_VERSION, atts: await hashDoc(doc) }
+      done++
+      if (done % 16 === 0 || done === emails.length) emit?.({ type: 'index-progress', collectionId: collection.id, phase, done, total: emails.length, currentFile: doc.name })
+    }
+  }
+  await Promise.all(Array.from({ length: pool }, () => worker()))
+
+  // Flatten the per-doc hashes into lookup structures. convsOf counts DISTINCT conversations
+  // a sha appears in — NOT raw emails — so a content image quoted down one reply chain (which
+  // inflates the email count) isn't mistaken for a signature. (A logo inlined twice in one
+  // mail still counts once.)
+  const all: AttHash[] = []
+  const convsOf = new Map<string, Set<string>>()
+  const byFp = new Map<string, AttHash[]>()
+  for (const doc of emails) {
+    const conv = conversationKey(doc)
+    for (const a of attHash[doc.id]?.atts ?? []) {
+      all.push(a)
+      if (!convsOf.has(a.sha)) convsOf.set(a.sha, new Set())
+      convsOf.get(a.sha)!.add(conv)
+      const fp = fpOf(a.name, a.size)
+      const arr = byFp.get(fp)
+      if (arr) arr.push(a)
+      else byFp.set(fp, [a])
+    }
+  }
+
+  // Auto-logo: a small image that recurs across >=3 distinct CONVERSATIONS is a signature/
+  // banner. Counting conversations (subject with re:/fwd: stripped), not raw emails, is what
+  // separates a real recurring logo from a content screenshot that merely gets quoted down a
+  // single thread. Counted two ways so re-encoded copies still consolidate:
+  //   - exact bytes (sha256): a logo embedded byte-for-byte across many conversations.
+  //   - perceptual (dHash): the SAME banner re-encoded by the mail client each send, so the
+  //     copies differ byte-wise (distinct sha) but share a dHash — e.g. a covid email banner
+  //     that appears, slightly recompressed, across dozens of threads.
+  if (collection.excludeSignatures) {
+    for (const [sha, set] of convsOf) {
+      if (set.size < MIN_RECURRENCE) continue
+      const rep = all.find((a) => a.sha === sha)
+      if (rep && rep.img && rep.size <= LOGO_MAX_BYTES) autoLogoShas.add(sha)
+    }
+    // Perceptual recurrence: group small images by dHash, count the DISTINCT conversations
+    // each group spans, and set aside every copy of any group that recurs enough. Re-encoded
+    // copies of one banner share an identical dHash, so grouping by the hash string is
+    // enough here (no fuzzy join needed) and stays cheap.
+    const convsOfDhash = new Map<string, Set<string>>()
+    const shasOfDhash = new Map<string, Set<string>>()
+    for (const doc of emails) {
+      const conv = conversationKey(doc)
+      for (const a of attHash[doc.id]?.atts ?? []) {
+        if (!a.img || !a.dhash || a.size > LOGO_MAX_BYTES) continue
+        if (!convsOfDhash.has(a.dhash)) {
+          convsOfDhash.set(a.dhash, new Set())
+          shasOfDhash.set(a.dhash, new Set())
+        }
+        convsOfDhash.get(a.dhash)!.add(conv)
+        shasOfDhash.get(a.dhash)!.add(a.sha)
+      }
+    }
+    for (const [dh, set] of convsOfDhash)
+      if (set.size >= MIN_RECURRENCE) for (const sha of shasOfDhash.get(dh)!) autoLogoShas.add(sha)
+  }
+
+  // Manual exclude: resolve each pointer to the attachment(s) it names, then expand to every
+  // byte-identical copy (sha) and, for images, every perceptually-similar copy.
+  const refDhashes: string[] = []
+  const addRef = (a: AttHash): void => {
+    excludeShas.add(a.sha)
+    if (a.dhash) refDhashes.push(a.dhash)
+  }
+  for (const fp of excludePointers) for (const a of byFp.get(fp) ?? []) addRef(a)
+  for (const a of all) if (legacyExcludeNames.has(a.name)) addRef(a)
+  if (refDhashes.length) for (const a of all) if (a.dhash && refDhashes.some((r) => hamming(a.dhash as string, r) <= DHASH_THRESHOLD)) excludeShas.add(a.sha)
+
+  // Keep (restore): resolve each pointer to the attachment(s) it names, then expand to every
+  // byte-identical copy (sha) and, for images, every perceptually-similar copy — mirroring
+  // manual exclude, so restoring one banner restores all its re-encoded twins. Keep wins over
+  // every exclusion rule, so it's applied last.
+  const keepDhashes: string[] = []
+  for (const fp of keepPointers)
+    for (const a of byFp.get(fp) ?? []) {
+      keepShas.add(a.sha)
+      if (a.dhash) keepDhashes.push(a.dhash)
+    }
+  if (keepDhashes.length)
+    for (const a of all) if (a.dhash && keepDhashes.some((r) => hamming(a.dhash as string, r) <= DHASH_THRESHOLD)) keepShas.add(a.sha)
+  for (const sha of keepShas) {
+    excludeShas.delete(sha)
+    autoLogoShas.delete(sha)
+  }
+
+  // Debug report: one row per DISTINCT attachment (by content sha) with its similarity key
+  // (dHash), how many distinct conversations it spans (sha-exact and dHash-group, whichever
+  // is higher — that's what the auto-logo rule counts), and the exclusion decision + reason.
+  // Makes "why wasn't this logo caught?" answerable at a glance (usually: too few distinct
+  // conversations, or no usable dHash, or larger than the logo size cap).
+  const convsByDhash = new Map<string, Set<string>>()
+  for (const doc of emails) {
+    const conv = conversationKey(doc)
+    for (const a of attHash[doc.id]?.atts ?? []) {
+      if (!a.img || !a.dhash || a.size > LOGO_MAX_BYTES) continue
+      if (!convsByDhash.has(a.dhash)) convsByDhash.set(a.dhash, new Set())
+      convsByDhash.get(a.dhash)!.add(conv)
+    }
+  }
+  const keyRows: string[][] = [
+    ['Filename', 'Size (bytes)', 'sha256 (short)', 'dHash (similarity key)', 'Distinct conversations', 'Decision', 'Reason']
+  ]
+  const seen = new Set<string>()
+  for (const a of all) {
+    if (seen.has(a.sha)) continue
+    seen.add(a.sha)
+    const recur = Math.max(convsOf.get(a.sha)?.size ?? 0, a.dhash ? convsByDhash.get(a.dhash)?.size ?? 0 : 0)
+    let decision = 'produced'
+    let reason: string
+    if (keepShas.has(a.sha)) {
+      decision = 'kept'
+      reason = 'restored / keep rule (overrides all exclusions)'
+    } else if (excludeShas.has(a.sha)) {
+      decision = 'excluded'
+      reason = 'manual exclude rule'
+    } else if (autoLogoShas.has(a.sha)) {
+      decision = 'excluded'
+      reason = `recurring logo — appears in ${recur} conversations (>= ${MIN_RECURRENCE})`
+    } else if (collection.excludeSignatures && a.size > 0 && a.size < SMALL_ATTACHMENT_BYTES) {
+      decision = 'excluded'
+      reason = `under ${Math.round(SMALL_ATTACHMENT_BYTES / 1024)} KB`
+    } else if (!a.img) {
+      reason = 'not an image (only exact-copy or manual rules apply)'
+    } else if (!a.dhash) {
+      reason = 'no similarity key — low-entropy/undecodable image; only exact-copy recurrence can catch it'
+    } else if (a.size > LOGO_MAX_BYTES) {
+      reason = `image larger than ${Math.round(LOGO_MAX_BYTES / 1024)} KB — too big to treat as a logo`
+    } else if (recur < MIN_RECURRENCE) {
+      reason = `recurs in only ${recur} conversation(s) — needs >= ${MIN_RECURRENCE} to be auto-flagged`
+    } else {
+      reason = 'kept as content'
+    }
+    keyRows.push([a.name, String(a.size), a.sha.slice(0, 12), a.dhash ?? 'none', String(recur), decision, reason])
+  }
+  // Same image (sha) can recur; one row each is enough, but sort so duplicates/near-misses
+  // sit together: by dHash, then size, then name.
+  keyRows.splice(1, keyRows.length, ...keyRows.slice(1).sort((x, y) => x[3].localeCompare(y[3]) || Number(x[1]) - Number(y[1]) || x[0].localeCompare(y[0])))
+
+  return { excludeShas, autoLogoShas, keepShas, attHash, scanned: true, keyRows }
+}
+
+/**
+ * The set of attachment fingerprints (name|size) the CURRENT rules would exclude — so the
+ * file tree can flag every matching copy (any filename) the instant a rule changes, without
+ * waiting for a re-run. Reuses the production hash cache and warms it for the next run.
+ */
+export async function previewExcludedFingerprints(collection: Collection, docs: IndexedDoc[]): Promise<string[]> {
+  const emails = docs.filter((d) => d.kind === 'email')
+  const manifest = (await getProductionManifest(collection.id)) as { attHash?: Record<string, AttHashEntry> } | null
+  const { excludeShas, autoLogoShas, keepShas, attHash, scanned } = await resolveExclusions(collection, emails, manifest?.attHash ?? {})
+  if (!scanned) return []
+  const keepNames = new Set((collection.keepNames ?? []).map((s) => s.trim().toLowerCase()))
+  const out = new Set<string>()
+  for (const doc of emails)
+    for (const a of attHash[doc.id]?.atts ?? []) {
+      if (keepNames.has(a.name) || keepShas.has(a.sha)) continue
+      if (excludeShas.has(a.sha) || autoLogoShas.has(a.sha)) out.add(fpOf(a.name, a.size))
+    }
+  // Warm the manifest's hash cache (preserving config/items) so the next preview/run is fast.
+  try {
+    const m = (await getProductionManifest(collection.id)) as Record<string, unknown> | null
+    await saveProductionManifest(collection.id, { ...(m ?? {}), attHash })
+  } catch {
+    /* best-effort cache warm */
+  }
+  return [...out]
+}
+
+/**
+ * The set of attachment fingerprints (name|size) the CURRENT keep rules would RESTORE —
+ * every copy a restore reaches, including perceptually-similar re-encoded twins under other
+ * filenames. Lets the tree show that restoring one excluded image will bring back its
+ * look-alikes too, without waiting for a re-run. Same resolver the production uses.
+ */
+export async function previewKeptFingerprints(collection: Collection, docs: IndexedDoc[]): Promise<string[]> {
+  const emails = docs.filter((d) => d.kind === 'email')
+  const manifest = (await getProductionManifest(collection.id)) as { attHash?: Record<string, AttHashEntry> } | null
+  const { keepShas, attHash, scanned } = await resolveExclusions(collection, emails, manifest?.attHash ?? {})
+  if (!scanned) return []
+  const keepNames = new Set((collection.keepNames ?? []).map((s) => s.trim().toLowerCase()))
+  const out = new Set<string>()
+  for (const doc of emails)
+    for (const a of attHash[doc.id]?.atts ?? []) {
+      if (keepShas.has(a.sha) || keepNames.has(a.name)) out.add(fpOf(a.name, a.size))
+    }
+  return [...out]
 }
 
 export async function buildProduction(
@@ -602,12 +1022,8 @@ export async function buildProduction(
   const features = collection.features as ProcessFeatures
   const outRoot = path.resolve(collection.output as string)
   const result: ProductionResult = { pdfCount: 0, processed: 0, skipped: 0, removed: 0, slipSheets: 0, excludedAttachments: 0, errors: [] }
-  const excludeAttachments = collection.excludeAttachments ?? []
-  // Per-file exclusions (name|size) — "exclude just this file", vs the by-name list above.
-  const excludeFingerprints = new Set(collection.excludeFingerprints ?? [])
-  // Fingerprints (name|size) of attachments the user restored — never excluded again.
-  const keepAttachments = new Set(collection.keepAttachments ?? [])
-  // "Keep all of this name" — a name-scoped restore that overrides every exclusion rule.
+  // "Keep all of this name" — a name-scoped override that wins over every exclusion rule.
+  // (The exclude/keep POINTER rules are resolved to content inside resolveExclusions below.)
   const keepNames = new Set((collection.keepNames ?? []).map((s) => s.trim().toLowerCase()))
   await fs.mkdir(outRoot, { recursive: true })
 
@@ -620,15 +1036,13 @@ export async function buildProduction(
   // appended after, path-sorted. This makes "add sources" incremental — only the
   // new documents are processed, matching how Bates numbers are assigned in practice
   // (existing production stays numbered; new docs get the next numbers).
-  type AttFpEntry = { mtime: number; size: number; imgs: string[] }
   const saved = (await getProductionManifest(collection.id)) as {
     config?: string
     items?: ProdItem[]
-    attFp?: Record<string, AttFpEntry>
-    excludeAttachments?: string[]
-    excludeFingerprints?: string[]
-    keepAttachments?: string[]
-    keepNames?: string[]
+    attHash?: Record<string, AttHashEntry>
+    /** Resolved exclude∪autoLogo∪keep shas from the last run — diffed to find which docs
+     *  a changed decision actually touches (per-doc re-render). */
+    decisionShas?: string[]
   } | null
   const priorOrder = new Map((saved?.items ?? []).map((it, i) => [it.id, i] as const))
   const targets = productionTargets(docs, features).sort((a, b) => {
@@ -644,6 +1058,13 @@ export async function buildProduction(
   let batesNext = bates?.start ?? 1
   const label = (n: number): string => prefix + String(n).padStart(PAD, '0')
 
+  // Item numbering: one sequential, zero-padded number per family (= per produced document),
+  // prefixed onto every file the family writes (e.g. `0001 - Smith.pdf`). Opt-in; the width
+  // is set by the document count (min 4 digits) so the numbers sort correctly in a listing.
+  const itemNumbering = !!collection.itemNumbering
+  const itemPad = Math.max(4, String(targets.length).length)
+  const itemPrefixFor = (n: number): string => (itemNumbering ? String(n).padStart(itemPad, '0') + ' - ' : '')
+
   // Mirror the input layout in the output: a file under source folder "<root>"
   // lands at Documents/<root-name>/<path-within-root>, so the produced bundle keeps
   // the source folders and their structure (and same-named subfolders from different
@@ -655,73 +1076,37 @@ export async function buildProduction(
     return path.join(path.basename(root), path.relative(root, p))
   }
 
-  // Set-wide prescan: fingerprint each email's image attachments and flag the ones
-  // that recur across many emails as signature logos — a real picture is attached
-  // once, a logo is re-attached to every message. Fingerprints are cached per-doc in
-  // the manifest, so an incremental run only re-parses changed emails. Only needed
-  // when excluding signatures (the feature that acts on the flagged logos).
-  const savedAttFp = saved?.attFp ?? {}
-  const attFp: Record<string, AttFpEntry> = {}
-  const recurringImageFps = new Set<string>()
-  if (collection.excludeSignatures) {
-    const emails = targets.filter((d) => d.kind === 'email')
-    emit({ type: 'index-progress', collectionId: collection.id, phase: 'Scanning for repeated logos', done: 0, total: emails.length })
-    // Parse cache-miss emails concurrently: each parse is dominated by reading the .eml
-    // and base64-decoding its attachments, so overlapping them finishes the scan far
-    // quicker than one-at-a-time on a fresh set. Unchanged emails reuse the cached scan.
-    const scanImgs = async (doc: IndexedDoc): Promise<string[]> => {
-      try {
-        const mail = await simpleParser(await fs.readFile(doc.path))
-        return [
-          ...new Set(
-            (mail.attachments || [])
-              .filter((a) => (a.contentType || '').startsWith('image/'))
-              .map((a) => attFingerprint(a.filename, a.content?.length || 0))
-          )
-        ]
-      } catch {
-        return []
-      }
-    }
-    let next = 0
-    let done = 0
-    const pool = Math.max(2, Math.min(emails.length, (os.cpus().length || 4)))
-    const worker = async (): Promise<void> => {
-      for (;;) {
-        if (isCancelled()) return
-        const idx = next++
-        if (idx >= emails.length) return
-        const doc = emails[idx]
-        const cached = savedAttFp[doc.id]
-        attFp[doc.id] =
-          cached && cached.mtime === doc.modifiedAt && cached.size === doc.size
-            ? cached
-            : { mtime: doc.modifiedAt, size: doc.size, imgs: await scanImgs(doc) }
-        done++
-        if (done % 16 === 0 || done === emails.length)
-          emit({ type: 'index-progress', collectionId: collection.id, phase: 'Scanning for repeated logos', done, total: emails.length, currentFile: doc.name })
-      }
-    }
-    await Promise.all(Array.from({ length: pool }, () => worker()))
-    const freq = new Map<string, number>()
-    for (const doc of emails) for (const fp of attFp[doc.id]?.imgs ?? []) freq.set(fp, (freq.get(fp) || 0) + 1) // imgs deduped per doc
-    for (const [fp, n] of freq) if (n >= MIN_RECURRENCE) recurringImageFps.add(fp)
-  }
-  const recurringHash = hashStr([...recurringImageFps].sort().join('\n'))
+  // Resolve every exclude/keep rule into content (sha256) sets — the SAME resolver the UI
+  // preview uses, so what the tree flags and what the run excludes can never disagree.
+  const emails = targets.filter((d) => d.kind === 'email')
+  const { excludeShas, autoLogoShas, keepShas, attHash, scanned, keyRows } = await resolveExclusions(collection, emails, saved?.attHash ?? {}, emit, isCancelled)
+  // sha256 → { perceptual key, is-image } so produced IMAGE attachments can carry their dHash
+  // in the name (the key the Excluded/ folder shows). Non-images (PDFs, Office, zips, video)
+  // get no decoration — a dHash is meaningless for them, so "dh=none" there is just noise.
+  const attKeyBySha = new Map<string, { dh: string | null; img: boolean }>()
+  for (const e of Object.values(attHash)) for (const a of e.atts ?? []) if (!attKeyBySha.has(a.sha)) attKeyBySha.set(a.sha, { dh: a.dhash, img: a.img })
+
+  // The resolved, content-based exclusion decision for this run — every render and
+  // excluded-collection call shares it so they all agree.
+  const exclOpts: ExclusionSets = { excludeSignatures: !!collection.excludeSignatures, excludeShas, autoLogoShas, keepShas, keepNames }
 
   // Scan input-vs-output: reuse documents that are unchanged AND would land on the
   // same Bates number; only (re)render new/changed docs (or ones whose numbering
   // shifted because something earlier in the sequence changed).
   emit({ type: 'index-progress', collectionId: collection.id, phase: 'Checking for changes', done: 0, total: targets.length })
   // Set-wide render options. If any differ from the last run, every cached PDF is stale,
-  // so ignore the manifest and re-render everything. excludeAttachments/keepAttachments
-  // are deliberately NOT here — those touch only specific emails, so they invalidate
-  // per-doc (below) instead of nuking the whole manifest. The recurring-logo set IS
-  // here: if it shifts, every email must re-render.
+  // so ignore the manifest and re-render everything. The specific exclude/keep CONTENT
+  // sets are deliberately NOT here — those touch only the docs that actually carry the
+  // affected content, so they invalidate per-doc (below). keepNames IS here (name-scoped,
+  // can't be diffed against content keys, and changes rarely): a change re-renders all.
   const configKey = JSON.stringify({
-    combine: !!collection.combineAttachments,
+    combine: true, // attachments are always merged into the email PDF now
+    attKeyInName: 1, // produced attachment files carry their size+dHash in the name (bump to re-render)
+    dhashV: DHASH_VERSION, // a dHash-algorithm change refreshes the size+dHash decoration on produced files
+    separate: !!collection.separateAttachments,
+    itemNumbering: !!collection.itemNumbering, // changes produced filenames → re-render all
     excludeSignatures: !!collection.excludeSignatures,
-    recurringHash,
+    keepNames: [...keepNames].sort(),
     bates: collection.bates ?? null,
     emailToPdf: features.emailToPdf,
     // Only what affects RENDERING belongs here. Review index / load file individually
@@ -733,22 +1118,15 @@ export async function buildProduction(
   const prevManifest = saved && saved.config === configKey ? saved.items ?? [] : []
   const prevById = new Map(prevManifest.map((p) => [p.id, p]))
 
-  // Per-doc invalidation for exclude/restore: a doc is re-rendered only if one of its
-  // own attachments had its exclude/keep state flipped since the last run. Everything
-  // else is reused — so toggling one attachment no longer re-renders the whole set.
-  const norm = (s: string): string => s.trim().toLowerCase()
-  // Which attachment rules changed since the last run, split into name-scoped and
-  // fingerprint-scoped sets (exclude + keep on both axes). A doc re-renders only if one
-  // of its own attachments is hit by a changed rule (docExcludeAffected, below).
-  const changedExclNames = symmetricDiff((saved?.excludeAttachments ?? []).map(norm), excludeAttachments.map(norm))
-  const changedKeepNames = symmetricDiff((saved?.keepNames ?? []).map(norm), [...keepNames])
-  const changedExclFps = symmetricDiff(saved?.excludeFingerprints ?? [], [...excludeFingerprints])
-  const changedKeepFps = symmetricDiff(saved?.keepAttachments ?? [], [...keepAttachments])
-  const changedNames = new Set([...changedExclNames, ...changedKeepNames])
-  const changedFps = new Set([...changedExclFps, ...changedKeepFps])
-  const excludeChanged = changedNames.size > 0 || changedFps.size > 0
-  const docAffected = (prev: ProdItem): boolean => docExcludeAffected(prev.attKeys, changedNames, changedFps)
-  const exclOpts = { excludeSignatures: !!collection.excludeSignatures, excludeAttachments, excludeFingerprints, recurringImageFps, keepAttachments, keepNames }
+  // Per-doc invalidation for exclude/restore: a doc is re-rendered only if one of its own
+  // attachments had its exclusion decision flipped since the last run. The decision is the
+  // resolved sha set (exclude ∪ autoLogo ∪ keep); diff it against the saved set, then a doc
+  // is affected iff it carries an attachment whose sha is in that diff. So toggling one
+  // attachment re-renders only the docs that actually contain matching content.
+  const decisionShas = [...new Set([...excludeShas, ...autoLogoShas, ...keepShas])]
+  const changedShas = symmetricDiff(saved?.decisionShas ?? [], decisionShas)
+  const excludeChanged = changedShas.size > 0
+  const docAffected = (prev: ProdItem): boolean => !!prev.attKeys?.some((sha) => changedShas.has(sha))
   const currentIds = new Set(targets.map((d) => d.id))
   result.removed = prevManifest.filter((p) => !currentIds.has(p.id)).length
   const outputExists = async (rel: string): Promise<boolean> => {
@@ -766,16 +1144,7 @@ export async function buildProduction(
   // Reused emails that carry attachments — we re-collect their excluded attachments
   // (parse only, no render) when the Excluded/ folder needs rebuilding.
   const reusedWithAtts: { doc: IndexedDoc; rel: string }[] = []
-  const renderOpts: RenderOpts = {
-    convert,
-    combine: !!collection.combineAttachments,
-    excludeSignatures: !!collection.excludeSignatures,
-    excludeAttachments,
-    excludeFingerprints,
-    recurringImageFps,
-    keepAttachments,
-    keepNames
-  }
+  const renderOpts: RenderOpts = { ...exclOpts, convert, combine: true, separate: !!collection.separateAttachments }
 
   // Numbering (Bates) is strictly sequential — each document's number depends on the
   // page count of every document before it — but RENDERING (the slow part) is not.
@@ -815,10 +1184,14 @@ export async function buildProduction(
     p.contentReuse ? p.prev?.batesSpan ?? p.prev?.pages ?? 0 : rendered.get(p.doc.id)?.pages ?? 0
   const shifted: Plan[] = []
   let planBates = batesNext
-  for (const p of plans) {
-    if (assignBates && p.contentReuse && p.prev && p.prev.begBates !== label(planBates)) shifted.push(p)
+  plans.forEach((p, idx) => {
+    // A reused doc must re-render if its Bates number drifted OR (when item numbering is on)
+    // its item number drifted — either changes a stamp or the filename prefix on disk.
+    const batesShift = assignBates && p.contentReuse && p.prev && p.prev.begBates !== label(planBates)
+    const itemShift = itemNumbering && p.contentReuse && p.prev && p.prev.itemNo !== idx + 1
+    if (batesShift || itemShift) shifted.push(p)
     planBates += spanOf(p)
-  }
+  })
 
   // Phase 4 — render the shifted documents in parallel too (re-stamping a PDF means
   // re-rendering it: the on-disk copy already carries its old number). Now that we know
@@ -834,8 +1207,9 @@ export async function buildProduction(
     for (let i = 0; i < plans.length; i++) {
       if (isCancelled()) break
       const p = plans[i]
+      const itemNo = i + 1
       emit({ type: 'index-progress', collectionId: collection.id, phase: 'Numbering documents', done: i, total: plans.length, currentFile: p.doc.name })
-      if (p.contentReuse && p.prev && (!assignBates || p.prev.begBates === label(batesNext))) {
+      if (p.contentReuse && p.prev && (!assignBates || p.prev.begBates === label(batesNext)) && (!itemNumbering || p.prev.itemNo === itemNo)) {
         // One-time migration: an earlier run named a PDF `…pdf.pdf` (base already ended
         // in .pdf). Rename it to the single-extension form and fix the stored path so the
         // load file / review index pick it up — without forcing a re-render.
@@ -858,8 +1232,8 @@ export async function buildProduction(
         }
       }
       try {
-        const { rec, excludedMeta, attKeys } = await writeRendered(r, outRoot, batesNext, prefix, assignBates, used, result)
-        items.push({ id: p.doc.id, path: p.doc.path, mtime: p.doc.modifiedAt, size: p.doc.size, excluded: excludedMeta, attKeys, ...rec })
+        const { rec, excludedMeta, attKeys, files } = await writeRendered(r, outRoot, batesNext, prefix, assignBates, used, result, itemPrefixFor(itemNo), attKeyBySha)
+        items.push({ id: p.doc.id, path: p.doc.path, mtime: p.doc.modifiedAt, size: p.doc.size, excluded: excludedMeta, attKeys, files, itemNo: itemNumbering ? itemNo : 0, ...rec })
         batesNext += rec.batesSpan
         result.processed++
         result.pdfCount++
@@ -887,6 +1261,15 @@ export async function buildProduction(
     if (!isCancelled()) await writeExcludedFolder(outRoot, excludedSink)
   }
 
+  // Write the attachment-keys debug report (similarity key + recurrence + decision per
+  // image) into Excluded/, alongside the grouping debug. Written after the rebuild above so
+  // it survives writeExcludedFolder's fresh-slate wipe.
+  if (!isCancelled() && keyRows && keyRows.length > 1) {
+    const exclDir = path.join(outRoot, 'Excluded')
+    await fs.mkdir(exclDir, { recursive: true })
+    await fs.writeFile(path.join(exclDir, '_attachment-keys.csv'), toCsv(keyRows))
+  }
+
   // A full run produced every current document, so `items` is the complete picture of
   // what Documents/ should contain. Sweep anything an earlier run left behind that no
   // longer belongs — a now-excluded attachment still sitting beside its email, an
@@ -894,17 +1277,14 @@ export async function buildProduction(
   // on a cancelled run, where `items` is only partial.
   if (!isCancelled()) await sweepStaleOutputs(outRoot, items)
 
-  // Persist the manifest (full or partial) so a paused run resumes from here.
-  // attFp caches the attachment fingerprints so the next run's prescan can skip
-  // re-parsing unchanged emails.
+  // Persist the manifest (full or partial) so a paused run resumes from here. attHash
+  // caches attachment content hashes so the next run's prescan skips re-hashing unchanged
+  // emails; decisionShas is the resolved exclusion set, diffed next run for per-doc reuse.
   await saveProductionManifest(collection.id, {
     config: configKey,
     items,
-    attFp: collection.excludeSignatures ? attFp : savedAttFp,
-    excludeAttachments: [...excludeAttachments],
-    excludeFingerprints: [...excludeFingerprints],
-    keepAttachments: [...keepAttachments],
-    keepNames: [...keepNames]
+    attHash: scanned ? attHash : (saved?.attHash ?? {}),
+    decisionShas
   })
   // Paused/cancelled mid-render: leave the index/load-file regeneration for the
   // resume run (when the full set is produced).

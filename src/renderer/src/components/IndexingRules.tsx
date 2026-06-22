@@ -70,7 +70,8 @@ export default function IndexingRules({ c }: { c: CollectionDetail }): JSX.Eleme
     }
   }
   const emailToPdf = f?.emailToPdf ?? false
-  const combine = !!c.combineAttachments
+  const separate = !!c.separateAttachments
+  const itemNumbering = !!c.itemNumbering
   const autoExclude = !!c.excludeSignatures
   const excludeNames = c.excludeAttachments ?? []
   const excludeFiles = c.excludeFingerprints ?? []
@@ -100,7 +101,6 @@ export default function IndexingRules({ c }: { c: CollectionDetail }): JSX.Eleme
   const attRules: AttRule[] = []
   if (autoExclude) {
     attRules.push({ kind: 'skip', text: 'Skip files under 3 KB', note: 'too small to be substantive' })
-    attRules.push({ kind: 'skip', text: 'Skip signature & logo images', note: 'small icons/graphics, in the body or attached' })
     attRules.push({ kind: 'skip', text: 'Skip images repeated across the set', note: 'letterhead / logos re-attached to many emails' })
   }
   const excludedNameSet = new Set(excludeNames.map((s) => s.toLowerCase()))
@@ -204,10 +204,15 @@ export default function IndexingRules({ c }: { c: CollectionDetail }): JSX.Eleme
           </Rule>
 
           <Rule icon={<Paperclip className="w-3.5 h-3.5" />}>
-            {combine
-              ? 'Merge each email’s attachments onto the end of its PDF — one document, one Bates range per family'
-              : 'Keep each email’s attachments as separate native files beside its PDF'}
+            {separate
+              ? 'Merge each email’s attachments onto the end of its PDF (one Bates range per family) and also save them as separate native files'
+              : 'Merge each email’s attachments onto the end of its PDF — one document, one Bates range per family'}
           </Rule>
+          {itemNumbering && (
+            <Rule icon={<Paperclip className="w-3.5 h-3.5" />}>
+              Prefix every document with a per-family item number (e.g. <span className="font-mono text-slate-400">0001 - …</span>)
+            </Rule>
+          )}
 
           {/* Combined attachment rules: automatic skips, then your excludes/keeps. */}
           <li className="pt-1 text-[10.5px] uppercase tracking-wider text-ink-600">Attachment rules</li>

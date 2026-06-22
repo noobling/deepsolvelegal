@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useStore } from '../state/store'
 import ProgressBar from '../components/ProgressBar'
 import { formatEta } from '../lib/format'
-import type { Collection, ProcessFeatures } from '@shared/types'
+import type { Collection, ProcessFeatures, ProcessingRules } from '@shared/types'
 import {
   FolderCog,
   FolderPlus,
@@ -15,6 +15,7 @@ import {
   Sparkles,
   X,
   FileStack,
+  FileUp,
   HardDrive,
   Mail,
   FileSpreadsheet,
@@ -231,7 +232,7 @@ function Toggle({
 }
 
 function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
-  const { createCollection, settings } = useStore()
+  const { createCollection, settings, setToast } = useStore()
   const [name, setName] = useState('')
   const [folders, setFolders] = useState<string[]>([])
   const [output, setOutput] = useState('')
@@ -241,12 +242,57 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const [loadFile, setLoadFile] = useState(false)
   const [highlights, setHighlights] = useState(false)
   const [aiEnrich, setAiEnrich] = useState(false)
-  const [combine, setCombine] = useState(true)
+  const [separate, setSeparate] = useState(false)
+  const [itemNumbering, setItemNumbering] = useState(false)
   const [excludeSignatures, setExcludeSignatures] = useState(false)
   const [excludeAttachmentsText, setExcludeAttachmentsText] = useState('')
   const [batesPrefix, setBatesPrefix] = useState('DOC-')
   const [batesStart, setBatesStart] = useState('1')
   const [busy, setBusy] = useState(false)
+  // A `.dslrules.json` imported here pre-fills the form below AND carries the full attachment
+  // exclude/keep lists (which the form can't show) into the new set on create.
+  const [importedRules, setImportedRules] = useState<ProcessingRules | null>(null)
+  const [importedName, setImportedName] = useState('')
+
+  const importConfig = async (): Promise<void> => {
+    const r = await window.api.library.pickRules()
+    if (r.cancelled) return
+    if (!r.ok || !r.rules) {
+      setToast(`Import failed: ${r.error || 'Could not read that config file.'}`)
+      return
+    }
+    const rules = r.rules
+    setImportedRules(rules)
+    setImportedName(r.fileName || 'config')
+    if (rules.features) {
+      setEmailToPdf(!!rules.features.emailToPdf)
+      setReviewIndex(!!rules.features.reviewIndex)
+      setLoadFile(!!rules.features.loadFile)
+      setHighlights(!!rules.features.highlights)
+      setAiEnrich(!!rules.features.aiEnrich)
+    }
+    if ('separateAttachments' in rules) setSeparate(!!rules.separateAttachments)
+    if ('itemNumbering' in rules) setItemNumbering(!!rules.itemNumbering)
+    if ('excludeSignatures' in rules) setExcludeSignatures(!!rules.excludeSignatures)
+    if (rules.bates) {
+      setBatesPrefix(rules.bates.prefix ?? 'DOC-')
+      setBatesStart(String(rules.bates.start ?? 1))
+    }
+    if (Array.isArray(rules.excludeAttachments)) setExcludeAttachmentsText(rules.excludeAttachments.join('\n'))
+    const n =
+      (rules.excludeAttachments?.length ?? 0) +
+      (rules.excludeFingerprints?.length ?? 0) +
+      (rules.keepAttachments?.length ?? 0) +
+      (rules.keepNames?.length ?? 0)
+    setToast(`Config imported${n ? ` · ${n} attachment rule${n === 1 ? '' : 's'}` : ''}.`)
+  }
+  // Count of attachment rules the imported config will carry (shown on the chip).
+  const importedRuleCount = importedRules
+    ? (importedRules.excludeAttachments?.length ?? 0) +
+      (importedRules.excludeFingerprints?.length ?? 0) +
+      (importedRules.keepAttachments?.length ?? 0) +
+      (importedRules.keepNames?.length ?? 0)
+    : 0
 
   const wantsOutput = emailToPdf || reviewIndex || loadFile || highlights
   const wantsBates = reviewIndex || loadFile || emailToPdf
@@ -282,13 +328,16 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
       output: wantsOutput ? outputValue.trim() || undefined : undefined,
       features,
       bates: wantsBates ? { prefix: batesPrefix, start: Math.max(1, parseInt(batesStart, 10) || 1) } : undefined,
-      combineAttachments: combine,
+      combineAttachments: true,
+      separateAttachments: separate,
+      itemNumbering,
       excludeSignatures,
       excludeAttachments: excludeAttachmentsText
         .split('\n')
         .map((s) => s.trim())
         .filter(Boolean),
-      aiEnrich
+      aiEnrich,
+      importedRules: importedRules ?? undefined
     })
     onClose()
   }
@@ -305,6 +354,45 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
             <X className="w-5 h-5" />
           </button>
         </div>
+
+        {/* Reuse a saved config (.dslrules.json) — pre-fills every setting below, including
+            the hand-curated attachment exclude/keep lists. */}
+        {importedRules ? (
+          <div className="mt-4 flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/[0.07] px-3 py-2 text-[12.5px]">
+            <FileUp className="w-4 h-4 shrink-0 text-accent" />
+            <span className="min-w-0 flex-1 truncate text-slate-200">
+              Using config <span className="font-medium">{importedName}</span>
+              {importedRuleCount > 0 && (
+                <span className="text-ink-500"> · {importedRuleCount} attachment rule{importedRuleCount === 1 ? '' : 's'}</span>
+              )}
+            </span>
+            <button
+              onClick={() => importConfig()}
+              className="shrink-0 text-[11.5px] text-ink-500 hover:text-slate-200"
+              title="Choose a different config file"
+            >
+              Replace
+            </button>
+            <button
+              onClick={() => {
+                setImportedRules(null)
+                setImportedName('')
+              }}
+              className="shrink-0 text-ink-600 hover:text-red-400"
+              title="Stop using this config (settings already filled in are kept)"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => void importConfig()}
+            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-ink-600 px-3 py-2 text-[12.5px] text-slate-300 hover:border-accent hover:text-accent"
+            title="Load settings from a previously exported .dslrules.json config"
+          >
+            <FileUp className="w-4 h-4" /> Import config…
+          </button>
+        )}
 
         <label className="block mt-5 text-[13px] text-ink-600">Name</label>
         <input
@@ -383,15 +471,25 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
 
         {wantsBates && (
           <div className="mt-4 rounded-lg border border-ink-700/70 bg-ink-900/40 p-3 space-y-2.5">
-            <label className="flex items-center gap-2.5 cursor-pointer text-[12.5px] text-slate-300">
-              <input type="checkbox" checked={combine} onChange={(e) => setCombine(e.target.checked)} className="accent-[#c9a24b]" />
-              Combine each email + its attachments into one PDF
+            <label className="flex items-start gap-2.5 cursor-pointer text-[12.5px] text-slate-300">
+              <input type="checkbox" checked={separate} onChange={(e) => setSeparate(e.target.checked)} className="mt-0.5 accent-[#c9a24b]" />
+              <span>
+                Also save attachments as separate files
+                <span className="text-ink-600"> · off by default — each email’s attachments are always merged onto the end of its PDF; this also writes them as native files beside it</span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2.5 cursor-pointer text-[12.5px] text-slate-300">
+              <input type="checkbox" checked={itemNumbering} onChange={(e) => setItemNumbering(e.target.checked)} className="mt-0.5 accent-[#c9a24b]" />
+              <span>
+                Prefix documents with an item number
+                <span className="text-ink-600"> · numbers each family in order, e.g. <span className="font-mono text-slate-400">0001 - Smith Contract.pdf</span></span>
+              </span>
             </label>
             <label className="flex items-start gap-2.5 cursor-pointer text-[12.5px] text-slate-300">
               <input type="checkbox" checked={excludeSignatures} onChange={(e) => setExcludeSignatures(e.target.checked)} className="mt-0.5 accent-[#c9a24b]" />
               <span>
                 Exclude email signatures &amp; logos
-                <span className="text-ink-600"> · removes logo/icon images (inline <span className="text-slate-400">and</span> as attachments), <span className="text-slate-400">images that repeat across the set</span> (recurring signature graphics), + footer boilerplate; keeps content photos &amp; text</span>
+                <span className="text-ink-600"> · sets aside <span className="text-slate-400">images that repeat across the set</span> (recurring signature graphics) <span className="text-slate-400">and</span> files under 3 KB, + strips footer boilerplate; keeps content photos &amp; text</span>
               </span>
             </label>
             <div>

@@ -287,6 +287,10 @@ export interface EmailToPdfProgress {
 export interface EmailToPdfOptions {
   /** Merge each email's attachments (PDFs/images) onto the end of its PDF. */
   combineAttachments?: boolean
+  /** Also write each email's kept attachments as separate native files beside the PDF
+   *  (opt-in; default off — they already live inside the combined PDF). When combine is
+   *  off they're always written natively regardless, or they'd be lost. */
+  separateAttachments?: boolean
   /** Stamp every page with a sequential Bates number, or null for none. */
   bates?: { prefix: string; start: number } | null
   /** Write an INTERNAL review index spreadsheet (Bates range + metadata per email). */
@@ -354,6 +358,8 @@ export interface ProcessingRules {
   features?: ProcessFeatures
   bates?: { prefix: string; start: number } | null
   combineAttachments?: boolean
+  separateAttachments?: boolean
+  itemNumbering?: boolean
   excludeSignatures?: boolean
   excludeAttachments?: string[]
   excludeFingerprints?: string[]
@@ -415,8 +421,15 @@ export interface Collection {
   features?: ProcessFeatures
   /** Bates numbering config for the production (prefix + start number). */
   bates?: { prefix: string; start: number }
-  /** Merge each email's attachments onto the end of its PDF. */
+  /** Legacy. Attachments are now ALWAYS merged onto the end of the email PDF, so this is
+   *  treated as true regardless of value; kept only so old sets / rules files still load. */
   combineAttachments?: boolean
+  /** Also keep each email's attachments as separate native files beside the PDF
+   *  (opt-in; default off — they already live inside the combined PDF). */
+  separateAttachments?: boolean
+  /** Prefix every produced document with a sequential, zero-padded item number per family
+   *  (e.g. `0001 - Smith Contract.pdf`). Opt-in; off by default. */
+  itemNumbering?: boolean
   /** Drop email signature graphics + footer boilerplate when rendering to PDF;
    *  also sets aside logo/icon attachments (small images) to Excluded/. */
   excludeSignatures?: boolean
@@ -523,9 +536,14 @@ export interface CreateCollectionInput {
   /** Bates numbering config (prefix + start). Defaults applied if omitted. */
   bates?: { prefix: string; start: number }
   combineAttachments?: boolean
+  separateAttachments?: boolean
+  itemNumbering?: boolean
   excludeSignatures?: boolean
   excludeAttachments?: string[]
   aiEnrich: boolean
+  /** Processing rules imported from a `.dslrules.json` at creation time. Applied to the new
+   *  set (deliverables, Bates, attachment handling, exclude/keep lists) after it's built. */
+  importedRules?: ProcessingRules
 }
 
 export type IndexEvent =
@@ -576,6 +594,8 @@ export interface Api {
     renderOffice: (path: string) => Promise<{ ok: boolean; html?: string; error?: string }>
     /** Probe a path's type/size (to render a source root as a folder or file). */
     stat: (path: string) => Promise<{ isDir: boolean; size: number } | null>
+    /** Aggregate file/folder counts under the given roots (descendants only). */
+    countTree: (paths: string[]) => Promise<{ files: number; folders: number }>
   }
   library: {
     list: () => Promise<Collection[]>
@@ -601,12 +621,26 @@ export interface Api {
     setExcludedFps: (id: string, fingerprints: string[], record?: { fp: string; path: string }) => Promise<CollectionDetail | null>
     /** Replace the keep-by-name list; returns the updated detail. */
     setKeptNames: (id: string, names: string[]) => Promise<CollectionDetail | null>
+    /** The attachment fingerprints (name|size) the current rules would exclude — so the file
+     *  tree can flag every content-matched copy (any filename) before a re-run. */
+    resolveExcluded: (id: string) => Promise<string[]>
+    /** The attachment fingerprints (name|size) the current keep rules would restore —
+     *  including perceptually-similar copies — so the tree shows restoring one image
+     *  restores its look-alikes too. */
+    resolveKept: (id: string) => Promise<string[]>
     /** Change which deliverables the set produces; the next re-run produces them. */
     setFeatures: (id: string, features: ProcessFeatures) => Promise<CollectionDetail | null>
+    /** Toggle keeping attachments as separate native files (they're always also merged into
+     *  the email PDF); the next re-run re-renders the production accordingly. */
+    setAttachmentMode: (id: string, combine: boolean, separate: boolean) => Promise<CollectionDetail | null>
+    /** Toggle per-family item-number prefixes on produced documents; applied on the next re-run. */
+    setItemNumbering: (id: string, enabled: boolean) => Promise<CollectionDetail | null>
     /** Export this set's processing rules to a `.dslrules.json` file (save dialog). */
     exportRules: (id: string) => Promise<ExportResult>
     /** Import processing rules from a `.dslrules.json` file (open dialog) into this set. */
     importRules: (id: string) => Promise<ImportRulesResult>
+    /** Pick + parse a `.dslrules.json` file (no set yet) to pre-fill the create dialog. */
+    pickRules: () => Promise<{ ok: boolean; rules?: ProcessingRules; fileName?: string; cancelled?: boolean; error?: string }>
     /** Pick source folders and/or files to add to a set. */
     pickSources: () => Promise<string[]>
     /** Append source paths (folders/files) to a set; returns the updated detail. */

@@ -53,7 +53,8 @@ const api: Api = {
     listDir: (p: string) => ipcRenderer.invoke('files:listDir', p),
     read: (p: string) => ipcRenderer.invoke('files:read', p),
     renderOffice: (p: string) => ipcRenderer.invoke('files:renderOffice', p),
-    stat: (p: string) => ipcRenderer.invoke('files:stat', p)
+    stat: (p: string) => ipcRenderer.invoke('files:stat', p),
+    countTree: (paths: string[]) => ipcRenderer.invoke('files:countTree', paths)
   },
   library: {
     list: () => ipcRenderer.invoke('library:list'),
@@ -74,9 +75,15 @@ const api: Api = {
     setExcludedFps: (id: string, fingerprints: string[], record?: { fp: string; path: string }) =>
       ipcRenderer.invoke('library:setExcludedFps', id, fingerprints, record),
     setKeptNames: (id: string, names: string[]) => ipcRenderer.invoke('library:setKeptNames', id, names),
+    resolveExcluded: (id: string) => ipcRenderer.invoke('library:resolveExcluded', id),
+    resolveKept: (id: string) => ipcRenderer.invoke('library:resolveKept', id),
     setFeatures: (id: string, features: ProcessFeatures) => ipcRenderer.invoke('library:setFeatures', id, features),
+    setAttachmentMode: (id: string, combine: boolean, separate: boolean) =>
+      ipcRenderer.invoke('library:setAttachmentMode', id, combine, separate),
+    setItemNumbering: (id: string, enabled: boolean) => ipcRenderer.invoke('library:setItemNumbering', id, enabled),
     exportRules: (id: string) => ipcRenderer.invoke('library:exportRules', id),
     importRules: (id: string) => ipcRenderer.invoke('library:importRules', id),
+    pickRules: () => ipcRenderer.invoke('library:pickRules'),
     pickSources: () => ipcRenderer.invoke('library:pickSources'),
     addSources: (id: string, paths: string[]) => ipcRenderer.invoke('library:addSources', id, paths),
     pickFolders: () => ipcRenderer.invoke('library:pickFolders'),

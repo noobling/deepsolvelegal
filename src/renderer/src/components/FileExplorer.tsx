@@ -141,20 +141,29 @@ const OFFICE_CSS = `
 `
 const PREVIEW_CAP = 25 * 1024 * 1024 // keep huge files out of the inline preview
 
-// Identity of an excluded attachment, matching the backend's attFingerprint
-// (name|size). "Needs Review" copies are written as "<base> (<n> bytes)<ext>" — strip
-// that suffix to recover the original name so the fingerprint matches.
-const fingerprintOf = (entry: DirEntry): string => {
-  const m = entry.name.match(/^(.*) \(\d+ bytes\)(\.[^.]*)$/)
-  const name = m ? m[1] + m[2] : entry.name
-  return name.trim().toLowerCase() + '|' + entry.size
+// Excluded/ copies are written decorated with their size and perceptual hash, e.g.
+// "image018 (69004 bytes, dh=c1d497e9e0f0f0c0).png" (older runs: just "(69004 bytes)").
+// Strip that decoration to recover the original attachment name. Keep both shapes working.
+const DECOR_RE = /^(.*) \(\d+ bytes(?:, dh=[^)]*)?\)(\.[^.]*)$/
+// Produced documents are prefixed with a per-family item number when that's on, e.g.
+// "0097 - image004.png". Strip that leading prefix so the fingerprint matches the original
+// attachment name the resolver works in (only when item numbering is on, so a real filename
+// that genuinely starts with "1234 - " isn't mangled). Removes a single leading prefix only.
+const ITEMNO_RE = /^\d+ - /
+const undecorateName = (name: string, itemNumbering = false): string => {
+  const base = itemNumbering ? name.replace(ITEMNO_RE, '') : name
+  const m = base.match(DECOR_RE)
+  return m ? m[1] + m[2] : base
 }
-// The original attachment name for a file, stripping the "(<n> bytes)" suffix that
-// Excluded/ copies carry, so it matches the by-name exclude/keep lists.
-const baseNameOf = (entry: DirEntry): string => {
-  const m = entry.name.match(/^(.*) \(\d+ bytes\)(\.[^.]*)$/)
-  return m ? m[1] + m[2] : entry.name
+// Pointer to the attachment the user clicked (name|size), matching the resolver's fpOf in
+// production.ts. It's only a POINTER: the resolver maps it to the file's actual bytes and
+// excludes/keeps by content (this file + every similar/identical copy).
+const fingerprintOf = (entry: DirEntry, itemNumbering = false): string => {
+  return undecorateName(entry.name, itemNumbering).trim().toLowerCase() + '|' + entry.size
 }
+// The original attachment name for a file, stripping the decoration that Excluded/ copies
+// carry (and any item-number prefix), so it matches the by-name exclude/keep lists.
+const baseNameOf = (entry: DirEntry, itemNumbering = false): string => undecorateName(entry.name, itemNumbering)
 
 /** Undo choice for a file excluded by a by-name rule: drop the whole name rule, or keep
  *  just this one file (a per-file keep that overrides the name exclusion for this path). */
@@ -173,31 +182,18 @@ function ExcludedUndoMenu({ base, onKeepFile, onIncludeAll }: { base: string; on
   )
 }
 
-/** Scope choice shown when excluding/restoring: this exact file, or every file of its name. */
-function ScopeMenu({ base, verb, onPick }: { base: string; verb: string; onPick: (scope: 'file' | 'name') => void }): JSX.Element {
-  return (
-    <div className="absolute right-0 top-full mt-1 z-20 w-64 rounded-md border border-ink-700 bg-ink-900 shadow-xl py-1">
-      <button onClick={() => onPick('file')} className="w-full text-left px-3 py-1.5 hover:bg-ink-800">
-        <span className="text-[12px] text-slate-100">{verb} just this file</span>
-        <span className="block text-[11px] text-ink-600">Only this exact file (matched by name + size)</span>
-      </button>
-      <button onClick={() => onPick('name')} className="w-full text-left px-3 py-1.5 hover:bg-ink-800">
-        <span className="text-[12px] text-slate-100">{verb} all named “{base}”</span>
-        <span className="block text-[11px] text-ink-600">Every attachment with this filename, across the set</span>
-      </button>
-    </div>
-  )
-}
-
 /** Preview pane for a single selected file. */
 function Preview({
   entry,
   excludedNames,
   excludedFps,
+  matchedFps,
+  matchedKeptFps,
   excludedDir,
   keptFps,
   keptNames,
   intendedDirs,
+  itemNumbering,
   busy,
   onExclude,
   onUnexclude,
@@ -208,15 +204,23 @@ function Preview({
   entry: DirEntry | null
   excludedNames: Set<string>
   excludedFps: Set<string>
+  /** Fingerprints the current rules would exclude by CONTENT (incl. copies under other
+   *  filenames). A file in here but not in excludedNames/excludedFps is matched, not ruled. */
+  matchedFps: Set<string>
+  /** Fingerprints the current keep rules would RESTORE by CONTENT (incl. look-alike copies).
+   *  A file in here but not in keptFps/keptNames is restored by match, not by its own rule. */
+  matchedKeptFps: Set<string>
   /** Absolute path of the output's Excluded/ folder, so a restore button can show for files inside it. */
   excludedDir: string | null
   keptFps: Set<string>
   keptNames: Set<string>
   /** For a file in Excluded/: the produced folder(s) a restore would put it back into. */
   intendedDirs?: string[]
+  /** Produced files carry an item-number prefix — strip it when computing fingerprints. */
+  itemNumbering: boolean
   /** A re-run is in flight — block toggling so changes can't queue onto a half-built output. */
   busy: boolean
-  onExclude: (name: string, fp: string, scope: 'file' | 'name', paths?: string[]) => void
+  onExclude: (name: string, fp: string, paths?: string[]) => void
   onUnexclude: (name: string, fp: string, paths?: string[]) => void
   /** Keep just this one file, overriding a by-name exclusion (the rest stay excluded). */
   onKeepFile: (name: string, fp: string) => void
@@ -229,7 +233,7 @@ function Preview({
   const [loadingText, setLoadingText] = useState(false)
   const [office, setOffice] = useState<{ loading: boolean; html?: string; error?: string } | null>(null)
   // Which menu (exclude scope / restore scope / excluded-undo) is open; reset on selection change.
-  const [menu, setMenu] = useState<null | 'exclude' | 'restore' | 'undo'>(null)
+  const [menu, setMenu] = useState<null | 'undo'>(null)
   useEffect(() => setMenu(null), [entry])
   const kind = entry && !entry.isDir ? kindOf(entry.ext) : 'unsupported'
 
@@ -280,13 +284,19 @@ function Preview({
     )
   }
 
-  const base = baseNameOf(entry)
-  const fp = fingerprintOf(entry)
+  const base = baseNameOf(entry, itemNumbering)
+  const fp = fingerprintOf(entry, itemNumbering)
   // A per-file or by-name "keep" overrides every exclusion rule (matches production).
-  const isRestored = keptFps.has(fp) || keptNames.has(base.toLowerCase())
+  const isRestoredDirect = keptFps.has(fp) || keptNames.has(base.toLowerCase())
+  // Restored only because a look-alike copy was restored (no keep rule on this file itself).
+  const isRestoredByMatch = !isRestoredDirect && matchedKeptFps.has(fp)
+  const isRestored = isRestoredDirect || isRestoredByMatch
   const excludedByName = excludedNames.has(base.toLowerCase())
   const excludedByFp = excludedFps.has(fp)
-  const isExcluded = !isRestored && (excludedByName || excludedByFp)
+  // Excluded because it matches an exclude rule by CONTENT (e.g. the same image excluded
+  // under a different filename), not because a rule was set on this file directly.
+  const excludedByMatch = !excludedByName && !excludedByFp && matchedFps.has(fp)
+  const isExcluded = !isRestored && (excludedByName || excludedByFp || excludedByMatch)
   const tooLarge = entry.size > PREVIEW_CAP
   const src = dsfileUrl(entry.path)
   // A file living under the output's Excluded/ folder was set aside by a filename
@@ -302,31 +312,35 @@ function Preview({
         </div>
         <div className="ml-auto flex items-center gap-1.5">
           {inExcludedFolder ? (
-            isRestored ? (
+            isRestoredDirect ? (
               <button
                 onClick={() => onUnrestore(base, fp, intendedDirs)}
                 disabled={busy}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
-                title={busy ? 'A re-run is in progress…' : 'Cancel restore — leave this attachment excluded'}
+                title={busy ? 'A re-run is in progress…' : 'Cancel restore — leave this attachment (and its look-alikes) excluded'}
               >
                 <Check className="w-3.5 h-3.5" /> Restoring — undo
               </button>
+            ) : isRestoredByMatch ? (
+              // Will be restored because a look-alike copy was restored — no rule on THIS file
+              // to undo (undo it from the file you restored). Show the state, not a dead button.
+              <span
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] border border-emerald-500/40 text-emerald-300"
+                title="A copy that looks the same was restored, so this one comes back too. Undo it from the file you restored."
+              >
+                <Check className="w-3.5 h-3.5" /> Restoring (look-alike)
+              </span>
             ) : (
-              <div className="relative">
-                <button
-                  onClick={() => setMenu(menu === 'restore' ? null : 'restore')}
-                  disabled={busy}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] border border-ink-700 text-slate-300 hover:bg-ink-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                  title={busy ? 'A re-run is in progress…' : 'Restore this attachment to the production'}
-                >
-                  <Undo2 className="w-3.5 h-3.5" /> Restore attachment <ChevronDown className="w-3 h-3 opacity-70" />
-                </button>
-                {menu === 'restore' && (
-                  <ScopeMenu base={base} verb="Restore" onPick={(scope) => { setMenu(null); onRestore(base, fp, scope, intendedDirs) }} />
-                )}
-              </div>
+              <button
+                onClick={() => onRestore(base, fp, 'file', intendedDirs)}
+                disabled={busy}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] border border-ink-700 text-slate-300 hover:bg-ink-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                title={busy ? 'A re-run is in progress…' : 'Restore this attachment, and every copy that looks the same, to the production'}
+              >
+                <Undo2 className="w-3.5 h-3.5" /> Restore similar
+              </button>
             )
-          ) : isRestored ? (
+          ) : isRestoredDirect ? (
             // Kept back from a by-name exclusion (this one file is produced; the rest stay out).
             <button
               onClick={() => onUnrestore(base, fp, intendedDirs)}
@@ -356,31 +370,38 @@ function Preview({
                   />
                 )}
               </div>
-            ) : (
-              // Excluded just this exact file (its own fingerprint) — single undo.
+            ) : excludedByFp ? (
+              // Excluded by content ("this attachment + every copy that looks the same") — single undo.
               <button
                 onClick={() => onUnexclude(base, fp, intendedDirs)}
                 disabled={busy}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
-                title={busy ? 'A re-run is in progress…' : 'Remove from the excluded list'}
+                title={busy ? 'A re-run is in progress…' : 'Stop excluding this attachment and ones like it'}
               >
                 <X className="w-3.5 h-3.5" /> Excluded — undo
               </button>
+            ) : (
+              // Excluded because it matches a rule set on another copy — there's no rule on
+              // THIS file to undo, so the action is a per-file keep (produce this one anyway).
+              <button
+                onClick={() => onKeepFile(base, fp)}
+                disabled={busy}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] border border-amber-500/40 text-amber-300 hover:bg-amber-500/10 disabled:opacity-50 disabled:cursor-not-allowed"
+                title={busy ? 'A re-run is in progress…' : 'Matches an exclude rule (same image) — keep this copy in the production'}
+              >
+                <X className="w-3.5 h-3.5" /> Excluded (match) — keep this
+              </button>
             )
           ) : (
-            <div className="relative">
-              <button
-                onClick={() => setMenu(menu === 'exclude' ? null : 'exclude')}
-                disabled={busy}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] border border-ink-700 text-slate-300 hover:bg-ink-800 disabled:opacity-50 disabled:cursor-not-allowed"
-                title={busy ? 'A re-run is in progress…' : 'Exclude this attachment from the production'}
-              >
-                <FileX className="w-3.5 h-3.5" /> Exclude attachment <ChevronDown className="w-3 h-3 opacity-70" />
-              </button>
-              {menu === 'exclude' && (
-                <ScopeMenu base={base} verb="Exclude" onPick={(scope) => { setMenu(null); onExclude(base, fp, scope, intendedDirs) }} />
-              )}
-            </div>
+            <button
+              onClick={() => onExclude(base, fp, intendedDirs)}
+              disabled={busy}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-[12px] border border-ink-700 text-slate-300 hover:bg-ink-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              title={busy ? 'A re-run is in progress…' : 'Exclude this attachment, and every copy that looks the same, from the production (shortcut: X)'}
+            >
+              <FileX className="w-3.5 h-3.5" /> Exclude similar
+              <kbd className="ml-0.5 px-1 py-px rounded border border-ink-600 bg-ink-800 text-[10px] text-ink-400">X</kbd>
+            </button>
           )}
           <button
             onClick={() => void window.api.files.reveal(entry.path)}
@@ -507,6 +528,29 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
   const excludedSet = useMemo(() => new Set(excludedList.map((s) => s.toLowerCase())), [excludedList])
   const excludedFpList = useMemo(() => c.excludeFingerprints ?? [], [c.excludeFingerprints])
   const excludedFpSet = useMemo(() => new Set(excludedFpList), [excludedFpList])
+
+  // Content-based preview of what the current rules would set aside, keyed by fingerprint
+  // (name|size) so the tree can cross out EVERY matching copy — including ones with a
+  // different filename or a re-encoded variant — the instant a rule changes, without waiting
+  // for a re-run. The renderer can't hash file contents, so the main process resolves it
+  // with the same resolver the production run uses (they can't disagree).
+  const [resolvedExcludedFps, setResolvedExcludedFps] = useState<Set<string>>(new Set())
+  // Companion of resolvedExcludedFps for KEEP rules: every copy a restore reaches, including
+  // perceptually-similar twins under other filenames — so restoring one image visibly
+  // restores its look-alikes too, before a re-run.
+  const [resolvedKeptFps, setResolvedKeptFps] = useState<Set<string>>(new Set())
+  useEffect(() => {
+    let alive = true
+    void window.api.library.resolveExcluded(c.id).then((fps) => {
+      if (alive) setResolvedExcludedFps(new Set(fps))
+    })
+    void window.api.library.resolveKept(c.id).then((fps) => {
+      if (alive) setResolvedKeptFps(new Set(fps))
+    })
+    return () => {
+      alive = false
+    }
+  }, [c.id, c.excludeFingerprints, c.excludeAttachments, c.keepAttachments, c.keepNames, c.excludeSignatures, c.production])
   const keptList = useMemo(() => c.keepAttachments ?? [], [c.keepAttachments])
   const keptSet = useMemo(() => new Set(keptList), [keptList])
   const keptNamesList = useMemo(() => c.keepNames ?? [], [c.keepNames])
@@ -587,6 +631,31 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
     setFullScan(null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prodSig])
+
+  // Aggregate file/folder totals for the header summary, counted natively in one IPC
+  // (descendants of the input folders, and of the produced bundle). Source recounts on
+  // Refresh; output recounts whenever a run rewrites the bundle (prodSig) or on Refresh.
+  const [srcCount, setSrcCount] = useState<{ files: number; folders: number } | null>(null)
+  const [outCount, setOutCount] = useState<{ files: number; folders: number } | null>(null)
+  useEffect(() => {
+    let alive = true
+    void window.api.files.countTree(c.folders).then((r) => alive && setSrcCount(r))
+    return () => {
+      alive = false
+    }
+  }, [c.folders, refreshNonce])
+  useEffect(() => {
+    if (!c.output) {
+      setOutCount(null)
+      return
+    }
+    let alive = true
+    void window.api.files.countTree([c.output]).then((r) => alive && setOutCount(r))
+    return () => {
+      alive = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [c.output, prodSig, refreshNonce])
 
   // Lazily load children for any expanded directory not yet cached.
   useEffect(() => {
@@ -790,8 +859,15 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
   }
 
   // Keyboard navigation: ↑/↓ move the cursor, →/← expand/collapse (or step in/out),
-  // Enter toggles a folder. Selecting a file previews it.
+  // Enter toggles a folder, X excludes/undoes the selected file. Selecting a file previews it.
   const onTreeKeyDown = (e: ReactKeyboardEvent): void => {
+    // X toggles exclusion of the selected file — works in the tree and in search results
+    // (which can have a selection even when the flat tree below is collapsed/empty).
+    if ((e.key === 'x' || e.key === 'X') && selected && !selected.isDir) {
+      e.preventDefault()
+      toggleExcludeSelected(selected)
+      return
+    }
     if (!flat.length) return
     const idx = selected ? flat.findIndex((f) => f.entry.path === selected.path) : -1
     const cur = idx >= 0 ? flat[idx].entry : null
@@ -834,16 +910,15 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
   // Each change has a scope: 'file' targets the exact file (its name|size fingerprint),
   // 'name' targets every attachment of that filename across the whole set.
 
-  // Set a file aside. scope 'file' → fingerprint list; 'name' → filename list.
-  // For a single-file exclude, record where this exact file lives (its folder, relative
-  // to the current tab's root) so the pending panel shows what's being set aside and from
-  // where. A by-name exclude spans the whole set, so no single location applies.
-  const excludeAttachment = (name: string, fp: string, scope: 'file' | 'name', paths?: string[]): void => {
+  // Set a file aside, content-based: this exact file AND every copy that looks the same
+  // (perceptually, for images) or is byte-identical, across the whole set. The clicked
+  // file's fingerprint is stored as the pointer; production.ts resolves it to content and
+  // expands the match. Record where this file lives so the pending panel shows the source.
+  const excludeAttachment = (name: string, fp: string, paths?: string[]): void => {
     if (busy) return
-    const where = scope === 'file' && selected ? relDir(selected.path) : ''
-    queueAttachmentOp({ kind: 'exclude', scope, file: name, paths: where ? [where] : paths })
-    if (scope === 'name') void setExcludedAttachments(Array.from(new Set([...excludedList, name])))
-    else void setExcludedFingerprints(Array.from(new Set([...excludedFpList, fp])), where ? { fp, path: where } : undefined)
+    const where = selected ? relDir(selected.path) : ''
+    queueAttachmentOp({ kind: 'exclude', scope: 'file', file: name, paths: where ? [where] : paths })
+    void setExcludedFingerprints(Array.from(new Set([...excludedFpList, fp])), where ? { fp, path: where } : undefined)
   }
 
   // Undo any exclusion of this file — clear it from both the name and fingerprint lists.
@@ -888,13 +963,43 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
     })()
   }
 
-  // True if a tree entry will be set aside — matched either by name or by exact file,
-  // unless a keep rule (per-file or by-name) pins it back in (keep wins, as in production).
+  // True if a tree entry will be set aside. Matched by the explicit rules the user set
+  // (name or exact file) OR by the content-based preview — so every copy of an excluded
+  // image is crossed out, even under a different filename. A keep rule pins it back in.
   const isExcludedEntry = (entry: DirEntry): boolean => {
-    const name = baseNameOf(entry).toLowerCase()
-    const fp = fingerprintOf(entry)
-    if (keptSet.has(fp) || keptNamesSet.has(name)) return false
-    return excludedSet.has(name) || excludedFpSet.has(fp)
+    const name = baseNameOf(entry, !!c.itemNumbering).toLowerCase()
+    const fp = fingerprintOf(entry, !!c.itemNumbering)
+    // A keep rule (direct, by-name, or by look-alike match) pins it back in.
+    if (keptSet.has(fp) || keptNamesSet.has(name) || resolvedKeptFps.has(fp)) return false
+    return excludedSet.has(name) || excludedFpSet.has(fp) || resolvedExcludedFps.has(fp)
+  }
+
+  // Toggle the exclusion of a file from the keyboard (the X hotkey), mirroring the primary
+  // action of the preview pane's button for whatever state the file is in: a normal file
+  // gets excluded ("exclude similar"); an excluded one is undone; a copy excluded only
+  // because it matches another file's rule is kept; a file in the output's Excluded/ folder
+  // is restored (or un-restored). No-op for folders or while a re-run is in flight.
+  const toggleExcludeSelected = (entry: DirEntry): void => {
+    if (busy || entry.isDir) return
+    const base = baseNameOf(entry, !!c.itemNumbering)
+    const fp = fingerprintOf(entry, !!c.itemNumbering)
+    const nameLc = base.toLowerCase()
+    const intendedDirs = restoreMap?.[entry.name]
+    const inExcludedFolder =
+      !!excludedDir && (entry.path === excludedDir || entry.path.startsWith(excludedDir + '/') || entry.path.startsWith(excludedDir + '\\'))
+    const isRestoredDirect = keptSet.has(fp) || keptNamesSet.has(nameLc)
+    const isRestored = isRestoredDirect || resolvedKeptFps.has(fp)
+    if (inExcludedFolder) {
+      // Only a file with its OWN keep rule can be un-restored; a look-alike match restores
+      // when its twin does, so the X key sets a direct keep on it (toggles cleanly next press).
+      if (isRestoredDirect) unrestoreAttachment(base, fp, intendedDirs)
+      else restoreAttachment(base, fp, 'file', intendedDirs)
+      return
+    }
+    if (isRestored) return unrestoreAttachment(base, fp, intendedDirs)
+    if (excludedSet.has(nameLc) || excludedFpSet.has(fp)) return unexcludeAttachment(base, fp, intendedDirs)
+    if (resolvedExcludedFps.has(fp)) return keepThisFile(base, fp) // matched by another file's rule
+    excludeAttachment(base, fp, intendedDirs)
   }
 
   const onAddSources = async (): Promise<void> => {
@@ -942,9 +1047,9 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
             Produced output
           </button>
         </div>
-        {excludedList.length > 0 && (
+        {excludedList.length + excludedFpList.length > 0 && (
           <span className="text-[11.5px] text-ink-600">
-            {excludedList.length} name{excludedList.length === 1 ? '' : 's'} on the exclude list
+            {excludedList.length + excludedFpList.length} exclude rule{excludedList.length + excludedFpList.length === 1 ? '' : 's'}
           </span>
         )}
         <button
@@ -955,6 +1060,26 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
           <FolderPlus className="w-3.5 h-3.5" /> Add source files…
         </button>
       </div>
+
+      {(srcCount || outCount) && (
+        <div className="px-5 pt-1.5 flex items-center gap-2.5 text-[11.5px] text-ink-600">
+          {srcCount && (
+            <span className={tab === 'source' ? 'text-slate-400' : ''}>
+              Source: <span className="text-slate-300 tabular-nums">{srcCount.files.toLocaleString()}</span> file
+              {srcCount.files === 1 ? '' : 's'} · <span className="text-slate-300 tabular-nums">{srcCount.folders.toLocaleString()}</span> folder
+              {srcCount.folders === 1 ? '' : 's'}
+            </span>
+          )}
+          {srcCount && outCount && <span className="text-ink-700">·</span>}
+          {outCount && (
+            <span className={tab === 'output' ? 'text-slate-400' : ''}>
+              Output: <span className="text-slate-300 tabular-nums">{outCount.files.toLocaleString()}</span> file
+              {outCount.files === 1 ? '' : 's'} · <span className="text-slate-300 tabular-nums">{outCount.folders.toLocaleString()}</span> folder
+              {outCount.folders === 1 ? '' : 's'}
+            </span>
+          )}
+        </div>
+      )}
 
       {(pending || attachmentOps.length > 0) && (
         <div className="mx-5 mt-2 rounded-lg border border-amber-500/40 bg-amber-500/[0.07] px-3 py-2.5">
@@ -992,7 +1117,7 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
                     : 'Keep all named'
                   : op.scope === 'file'
                     ? op.kind === 'exclude'
-                      ? 'Exclude only'
+                      ? 'Exclude similar to'
                       : 'Keep only'
                     : op.kind === 'include'
                       ? 'Include'
@@ -1122,6 +1247,10 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
               })
             )}
           </div>
+          <div className="shrink-0 border-t border-ink-700/50 px-2.5 py-1.5 text-[10.5px] text-ink-600 flex items-center gap-1.5">
+            <kbd className="px-1 py-px rounded border border-ink-700 bg-ink-800 text-[10px] text-slate-300">X</kbd>
+            <span>{selected && !selected.isDir ? 'exclude / undo selected file' : 'select a file, then X to exclude'}</span>
+          </div>
         </div>
 
         {/* Preview */}
@@ -1130,10 +1259,13 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
             entry={selected}
             excludedNames={excludedSet}
             excludedFps={excludedFpSet}
+            matchedFps={resolvedExcludedFps}
+            matchedKeptFps={resolvedKeptFps}
             excludedDir={excludedDir}
             keptFps={keptSet}
             keptNames={keptNamesSet}
             intendedDirs={selected ? restoreMap?.[selected.name] : undefined}
+            itemNumbering={!!c.itemNumbering}
             busy={busy}
             onExclude={excludeAttachment}
             onUnexclude={unexcludeAttachment}
