@@ -80,7 +80,14 @@ interface ProdItem {
    *  The sweep keeps exactly these and removes anything else, so renamed/now-excluded files
    *  don't linger across runs. */
   files?: string[]
+  /** Produced attachment file → source fingerprint links (slip/imaged PDF + native both map to
+   *  the same source attachment), persisted so the exclude-map survives an incremental reuse. */
+  attFiles?: AttFileLink[]
 }
+
+/** Maps a produced attachment file's basename to its SOURCE attachment fingerprint (name|size),
+ *  so the tree resolves either produced copy (slip/imaged PDF or native) to the same source. */
+type AttFileLink = { file: string; fp: string }
 
 /** The family head — the email/document record (vs. its attachment children). */
 const headRec = (it: ProdItem): ProdRecord => it.records[0]
@@ -157,6 +164,10 @@ type RenderedAtt = {
   native?: Buffer
   /** sha256 of the content — keys the dHash decoration on the produced native file. */
   sha: string
+  /** Byte length of the ORIGINAL attachment — the source size for its name|size fingerprint,
+   *  so the tree can map either produced file (slip/imaged PDF or native) back to the source
+   *  attachment when excluding. */
+  srcSize: number
 }
 
 /** Turn one kept attachment into its own Bates document: imaged to PDF for clean types,
@@ -183,11 +194,11 @@ async function renderAttachment(
     // A .pdf attachment's produced PDF IS its native — no separate copy needed; everything
     // else keeps the native beside the imaged page.
     const native = ext === '.pdf' ? undefined : content
-    return { name, pdf, pages, slip: false, native, sha }
+    return { name, pdf, pages, slip: false, native, sha, srcSize: content.length }
   }
   const slip = await slipSheet(name)
   result.slipSheets++
-  return { name, pdf: slip, pages: 1, slip: true, native: content, sha }
+  return { name, pdf: slip, pages: 1, slip: true, native: content, sha, srcSize: content.length }
 }
 
 /**
@@ -512,7 +523,7 @@ async function writeRendered(
   /** sha256 → { perceptual key, is-image }, so produced IMAGE attachments can carry their
    *  similarity key in the name, like the Excluded/ folder does (non-images stay clean). */
   attKeyBySha: Map<string, { dh: string | null; img: boolean }>
-): Promise<{ records: ProdRecord[]; excludedMeta: ExcludedMeta[]; attKeys: string[]; files: string[]; familySpan: number }> {
+): Promise<{ records: ProdRecord[]; excludedMeta: ExcludedMeta[]; attKeys: string[]; files: string[]; familySpan: number; attFiles: AttFileLink[] }> {
   const batesLabel = (n: number): string => prefix + String(n).padStart(PAD, '0')
   // The family folder is named by the email's (head's) Bates when it has attachments, so the
   // whole family is traceable from the folder name; a doc / attachment-less email stays flat.
@@ -530,6 +541,9 @@ async function writeRendered(
   }
   const files: string[] = []
   const records: ProdRecord[] = []
+  // produced attachment file basename → its SOURCE attachment fingerprint (name|size), so the
+  // tree can resolve either the slip/imaged PDF or the native back to the same source.
+  const attFiles: AttFileLink[] = []
 
   if (r.native) {
     const name = claim(batesPrefixName(headBeg, safeName(r.doc.name)))
@@ -537,7 +551,7 @@ async function writeRendered(
     await fs.copyFile(r.doc.path, outPath)
     const beg = headBeg
     records.push({ begBates: beg, endBates: beg, pages: 0, batesSpan: 1, date: r.date, from: r.from, to: r.to, cc: r.cc, subject: r.subject, docType: r.docType, kind: r.doc.kind, fileRel: path.relative(outRoot, outPath), attCount: r.attCount, attNames: r.attNames })
-    return { records, excludedMeta: r.excludedMeta, attKeys: r.attKeys, files: [name], familySpan: 1 }
+    return { records, excludedMeta: r.excludedMeta, attKeys: r.attKeys, files: [name], familySpan: 1, attFiles }
   }
 
   let cursor = batesStart
@@ -591,6 +605,11 @@ async function writeRendered(
     const childPdfName = claim(batesPrefixName(s.begin, attPdfName(att.name)))
     files.push(childPdfName)
     await fs.writeFile(path.join(folder, childPdfName), s.bytes)
+    // The source attachment's fingerprint (name|size) — BOTH produced files (the slip/imaged
+    // PDF and the native) point back to it, so excluding either in the tree sets aside the
+    // whole attachment (and crosses out both copies).
+    const srcFp = fpOf(att.name, att.srcSize)
+    attFiles.push({ file: childPdfName, fp: srcFp })
     // Produce the native alongside (when not a passthrough PDF) so fidelity is preserved AND
     // the content-based exclusion workflow keeps matching on the native's name|size|dHash. Its
     // relative path becomes this document's NATIVELINK in the load file.
@@ -602,12 +621,13 @@ async function writeRendered(
       files.push(nativeName)
       await fs.writeFile(path.join(folder, nativeName), att.native)
       nativeRel = path.relative(outRoot, path.join(folder, nativeName))
+      attFiles.push({ file: nativeName, fp: srcFp })
     }
     records.push({ begBates: s.begin, endBates: s.end, pages: s.pages, batesSpan: s.pages, date: r.date, from: r.from, to: r.to, cc: r.cc, subject: att.name, docType: 'Attachment', kind: 'doc', fileRel: path.relative(outRoot, path.join(folder, childPdfName)), attCount: 0, attNames: '', nativeRel })
     cursor += s.pages
   }
 
-  return { records, excludedMeta: r.excludedMeta, attKeys: r.attKeys, files, familySpan: cursor - batesStart }
+  return { records, excludedMeta: r.excludedMeta, attKeys: r.attKeys, files, familySpan: cursor - batesStart, attFiles }
 }
 
 /**
@@ -1235,7 +1255,7 @@ export async function buildProduction(
   const configKey = JSON.stringify({
     combine, // one-PDF families vs. the per-attachment-Bates default
     perAtt, // each attachment its own Bates document — changes naming + numbering
-    perAttBates: 3, // structural version of the per-attachment Bates layout (bump to re-render all)
+    perAttBates: 4, // structural version of the per-attachment Bates layout (bump to re-render all)
     attKeyInName: 1, // produced attachment files carry their size+dHash in the name (bump to re-render)
     dhashV: DHASH_VERSION, // a dHash-algorithm change refreshes the size+dHash decoration on produced files
     excludeSignatures: !!collection.excludeSignatures,
@@ -1365,8 +1385,8 @@ export async function buildProduction(
         }
       }
       try {
-        const { records, excludedMeta, attKeys, files, familySpan } = await writeRendered(r, outRoot, batesNext, prefix, assignBates, used, result, attKeyBySha)
-        items.push({ id: p.doc.id, path: p.doc.path, mtime: p.doc.modifiedAt, size: p.doc.size, excluded: excludedMeta, attKeys, files, records, familySpan })
+        const { records, excludedMeta, attKeys, files, familySpan, attFiles } = await writeRendered(r, outRoot, batesNext, prefix, assignBates, used, result, attKeyBySha)
+        items.push({ id: p.doc.id, path: p.doc.path, mtime: p.doc.modifiedAt, size: p.doc.size, excluded: excludedMeta, attKeys, files, records, familySpan, attFiles })
         batesNext += familySpan
         result.processed++
         result.pdfCount += records.length
@@ -1409,6 +1429,14 @@ export async function buildProduction(
   // abandoned family folder, or the output of a document removed from the set. Skipped
   // on a cancelled run, where `items` is only partial.
   if (!isCancelled()) await sweepStaleOutputs(outRoot, items)
+
+  // Write the exclude-map: produced attachment file basename → source attachment fingerprint.
+  // The file tree reads this so excluding either produced copy (the slip/imaged PDF or the
+  // native) resolves to the one source attachment — setting aside both, and crossing both out.
+  // Hidden dotfile so it's filtered from the browsable tree.
+  const exclMap: Record<string, string> = {}
+  for (const it of items) for (const a of it.attFiles ?? []) exclMap[a.file] = a.fp
+  await fs.writeFile(path.join(outRoot, '.exclude-map.json'), JSON.stringify(exclMap)).catch(() => {})
 
   // Persist the manifest (full or partial) so a paused run resumes from here. attHash
   // caches attachment content hashes so the next run's prescan skips re-hashing unchanged

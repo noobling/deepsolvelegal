@@ -195,6 +195,7 @@ function Preview({
   keptNames,
   intendedDirs,
   batesPrefix,
+  excludeMap,
   busy,
   onExclude,
   onUnexclude,
@@ -220,6 +221,9 @@ function Preview({
   /** The set's Bates prefix — produced files carry a `<prefix><digits> - ` prefix; strip it
    *  when computing fingerprints. Empty when no Bates numbering is configured. */
   batesPrefix: string
+  /** Produced attachment basename → source fingerprint, so a slip/imaged PDF resolves to the
+   *  same source attachment as its native sibling. */
+  excludeMap: Record<string, string>
   /** A re-run is in flight — block toggling so changes can't queue onto a half-built output. */
   busy: boolean
   onExclude: (name: string, fp: string, paths?: string[]) => void
@@ -287,7 +291,9 @@ function Preview({
   }
 
   const base = baseNameOf(entry, batesPrefix)
-  const fp = fingerprintOf(entry, batesPrefix)
+  // A produced slip/imaged PDF (or native) resolves to its SOURCE attachment fingerprint via
+  // the exclude-map, so excluding it sets aside the whole attachment; else its own fingerprint.
+  const fp = excludeMap[entry.name] ?? fingerprintOf(entry, batesPrefix)
   // A per-file or by-name "keep" overrides every exclusion rule (matches production).
   const isRestoredDirect = keptFps.has(fp) || keptNames.has(base.toLowerCase())
   // Restored only because a look-alike copy was restored (no keep rule on this file itself).
@@ -523,6 +529,9 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
   const [refreshNonce, setRefreshNonce] = useState(0)
   // Excluded-file → produced folder(s) a restore lands in, read from Excluded/.restore-map.json.
   const [restoreMap, setRestoreMap] = useState<Record<string, string[]> | null>(null)
+  // produced attachment basename → source fingerprint (name|size): lets excluding either
+  // produced copy (the slip/imaged PDF or the native) resolve to the one source attachment.
+  const [excludeMap, setExcludeMap] = useState<Record<string, string>>({})
   const selectedRowRef = useRef<HTMLDivElement | null>(null)
   const treeRef = useRef<HTMLDivElement | null>(null)
 
@@ -594,6 +603,26 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
       alive = false
     }
   }, [excludedDir, sep, c.production, refreshNonce])
+
+  // Load the exclude-map (produced file → source fingerprint) so excluding a produced slip/
+  // imaged PDF resolves to the same source attachment as its native sibling. Re-read per run.
+  useEffect(() => {
+    setExcludeMap({})
+    const out = c.output ? c.output.replace(/[/\\]+$/, '') : null
+    if (!out) return
+    let alive = true
+    void window.api.files.read(`${out}${sep}.exclude-map.json`).then((r) => {
+      if (!alive || !r.ok || r.kind !== 'text' || !r.data) return
+      try {
+        setExcludeMap(JSON.parse(r.data) as Record<string, string>)
+      } catch {
+        /* missing/invalid map — produced PDFs just fall back to their own fingerprint */
+      }
+    })
+    return () => {
+      alive = false
+    }
+  }, [c.output, sep, c.production, refreshNonce])
 
   // Roots for the active tab: every input source (Source) or the single bundle (Output).
   const roots: DirEntry[] = useMemo(() => {
@@ -970,7 +999,7 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
   // image is crossed out, even under a different filename. A keep rule pins it back in.
   const isExcludedEntry = (entry: DirEntry): boolean => {
     const name = baseNameOf(entry, c.bates?.prefix ?? '').toLowerCase()
-    const fp = fingerprintOf(entry, c.bates?.prefix ?? '')
+    const fp = excludeMap[entry.name] ?? fingerprintOf(entry, c.bates?.prefix ?? '')
     // A keep rule (direct, by-name, or by look-alike match) pins it back in.
     if (keptSet.has(fp) || keptNamesSet.has(name) || resolvedKeptFps.has(fp)) return false
     return excludedSet.has(name) || excludedFpSet.has(fp) || resolvedExcludedFps.has(fp)
@@ -984,7 +1013,7 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
   const toggleExcludeSelected = (entry: DirEntry): void => {
     if (busy || entry.isDir) return
     const base = baseNameOf(entry, c.bates?.prefix ?? '')
-    const fp = fingerprintOf(entry, c.bates?.prefix ?? '')
+    const fp = excludeMap[entry.name] ?? fingerprintOf(entry, c.bates?.prefix ?? '')
     const nameLc = base.toLowerCase()
     const intendedDirs = restoreMap?.[entry.name]
     const inExcludedFolder =
@@ -1268,6 +1297,7 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
             keptNames={keptNamesSet}
             intendedDirs={selected ? restoreMap?.[selected.name] : undefined}
             batesPrefix={c.bates?.prefix ?? ''}
+            excludeMap={excludeMap}
             busy={busy}
             onExclude={excludeAttachment}
             onUnexclude={unexcludeAttachment}
