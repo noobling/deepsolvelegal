@@ -102,7 +102,7 @@ const Row = memo(function Row({
         ) : (
           iconFor(entry)
         )}
-        <span className={`truncate ${excluded ? 'line-through text-ink-600' : ''}`}>{entry.name}</span>
+        <span className={`truncate ${excluded ? 'line-through text-ink-600' : ''}`} title={entry.name}>{entry.name}</span>
         {loading && <Loader2 className="w-3 h-3 animate-spin text-ink-500 ml-1" />}
         {excluded && <Ban className="w-3 h-3 text-amber-400/80 shrink-0" />}
       </button>
@@ -309,7 +309,7 @@ function Preview({
     <div className="h-full flex flex-col">
       <div className="shrink-0 border-b border-ink-700/50 px-3 py-2 flex items-center gap-2">
         <div className="min-w-0">
-          <div className="text-[12.5px] text-slate-100 truncate" title={entry.name}>{entry.name}</div>
+          <div className="text-[12.5px] text-slate-100 break-words" title={entry.name}>{entry.name}</div>
           <div className="text-[11px] text-ink-600">{fmtSize(entry.size)}</div>
         </div>
         <div className="ml-auto flex items-center gap-1.5">
@@ -1217,10 +1217,10 @@ export default function FileExplorer({ c }: { c: CollectionDetail }): JSX.Elemen
                       >
                         {iconFor(entry)}
                         <span className="min-w-0 flex-1">
-                          <span className={`block truncate text-[12.5px] ${isExcludedEntry(entry) ? 'line-through text-ink-600' : ''}`}>
+                          <span className={`block truncate text-[12.5px] ${isExcludedEntry(entry) ? 'line-through text-ink-600' : ''}`} title={entry.name}>
                             {entry.name}
                           </span>
-                          {dir && <span className="block truncate text-[10.5px] text-ink-600">{dir}</span>}
+                          {dir && <span className="block truncate text-[10.5px] text-ink-600" title={dir}>{dir}</span>}
                         </span>
                       </button>
                     )
