@@ -61,6 +61,17 @@ check('NATIVELINK blank when no native (col 12)', lr[0][12] === '')
 check('PAGE COUNT (col 13)', lr[0][13] === '4')
 check('headers BEGATTACH/ENDATTACH labelled', m.LOADFILE_HEADER[2] === 'BEGATTACH' && m.LOADFILE_HEADER[3] === 'ENDATTACH')
 
+console.log('opticon (.opt) image cross-reference:')
+const opt = m.opticonRows(recs, 'DOC-', 6)
+check('one line per page across the set', opt.length === 5) // 4 pages + 1 page
+check('every row has 7 fields', opt.every((r) => r.length === 7))
+check('PageID is the per-page Bates', opt[0][0] === 'DOC-000001' && opt[1][0] === 'DOC-000002' && opt[3][0] === 'DOC-000004')
+check('DocumentBreak Y on first page only', opt[0][3] === 'Y' && opt[1][3] === '' && opt[2][3] === '' && opt[3][3] === '')
+check('PageCount on first page only', opt[0][6] === '4' && opt[1][6] === '')
+check('ImageFilePath uses backslashes', opt[0][2] === 'Cat 1\\a\\a.pdf')
+check('next document starts a new break', opt[4][0] === 'DOC-000005' && opt[4][3] === 'Y' && opt[4][6] === '1')
+check('skips records with no pages', m.opticonRows([{ ...recs[1], pages: 0 }], 'DOC-', 6).length === 0)
+
 console.log('highlights:')
 const hdocs = [
   { name: 'a.docx', highlights: [{ text: 'indemnify', color: 'yellow', page: 3, context: 'the clause' }, { text: 'liability', color: '#00ff00', page: null, context: '' }] },

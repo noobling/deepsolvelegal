@@ -86,6 +86,30 @@ export function loadFileRows(records: ProdRecord[]): string[][] {
   ])
 }
 
+/**
+ * Opticon (.OPT) image cross-reference rows — ONE LINE PER PAGE, the page-level file a review
+ * platform uses to map every Bates-stamped page to its image. Seven fields per the DOJ/Opticon
+ * spec: PageID, VolumeLabel, ImageFilePath, DocumentBreak, FolderBreak, BoxBreak, PageCount.
+ *   - PageID is that page's own Bates (begBates for page 1, +1 each page after).
+ *   - ImageFilePath is the produced PDF (all pages of a multi-page doc point at the same file).
+ *   - DocumentBreak = "Y" on a document's first page; PageCount is set only on that first page.
+ * Records with no pages (a native-only passthrough) carry no image, so they're skipped. Paths
+ * use backslashes, the Opticon convention.
+ */
+export function opticonRows(records: ProdRecord[], prefix: string, pad: number): string[][] {
+  const rows: string[][] = []
+  for (const r of records) {
+    const start = parseInt(r.begBates.slice(prefix.length), 10)
+    if (!r.begBates || r.pages <= 0 || !Number.isFinite(start)) continue
+    const image = r.fileRel.replace(/\//g, '\\')
+    for (let i = 0; i < r.pages; i++) {
+      const pageId = prefix + String(start + i).padStart(pad, '0')
+      rows.push([pageId, '', image, i === 0 ? 'Y' : '', '', '', i === 0 ? String(r.pages) : ''])
+    }
+  }
+  return rows
+}
+
 export const HIGHLIGHT_HEADER = ['Document', 'Page', 'Colour', 'Highlight', 'Context']
 
 /** Flatten every reviewer highlight across the set into export rows. */

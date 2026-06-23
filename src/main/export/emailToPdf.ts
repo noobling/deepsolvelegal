@@ -221,6 +221,14 @@ export function toCsv(rows: string[][]): string {
   return '\uFEFF' + rows.map((r) => r.map((c) => cell(c || '')).join(',')).join('\r\n') + '\r\n'
 }
 
+// Opticon (.OPT) image cross-reference: plain comma-delimited, CRLF rows, NO header,
+// NO text qualifiers, NO BOM \u2014 the classic Concordance/Opticon image-load format. Commas in a
+// value would corrupt the column layout, so strip them (paths are already safeName-sanitised).
+export function toOpt(rows: string[][]): string {
+  const cell = (c: string): string => (c || '').replace(/[,\r\n]+/g, ' ')
+  return rows.map((r) => r.map(cell).join(',')).join('\r\n') + '\r\n'
+}
+
 export async function convertEmailsToPdf(
   inputDir: string,
   outputDir: string,

@@ -6,7 +6,7 @@ import { simpleParser, type ParsedMail } from 'mailparser'
 import type { Collection, IndexedDoc, IndexEvent, ProcessFeatures, ProductionResult } from '@shared/types'
 import { buildEmailHtml, SMALL_ATTACHMENT_BYTES } from './emailHtml'
 import { sha256, dHash, hamming, DHASH_THRESHOLD, DHASH_VERSION, LOGO_MAX_BYTES } from './imageHash'
-import { combineFamily, makeRenderWindow, pageCount, renderInto, safeName, stampBates, toCsv, toDat, withTimeout } from './emailToPdf'
+import { combineFamily, makeRenderWindow, pageCount, renderInto, safeName, stampBates, toCsv, toDat, toOpt, withTimeout } from './emailToPdf'
 
 // Merging attachments into a family PDF (pdf-lib) can grind for minutes on a big drawing
 // set, run 6-wide across the worker pool. Bound it: if it overruns, keep the un-combined
@@ -22,6 +22,7 @@ import {
   highlightRows,
   reviewIndexRows,
   loadFileRows,
+  opticonRows,
   productionTargets,
   excludedSummary,
   symmetricDiff,
@@ -1453,13 +1454,16 @@ export async function buildProduction(
     result.indexPath = p
   }
 
-  // Production load file — Concordance .DAT + universal .CSV, with family ranges (external).
+  // Production load file — Concordance .DAT + universal .CSV (document-level metadata + family
+  // ranges) plus an Opticon .OPT image cross-reference (page-level: every Bates page → its PDF).
   if (features.loadFile && records.length) {
     await fs.mkdir(loadFilesDir, { recursive: true })
     const table = [LOADFILE_HEADER, ...loadFileRows(records)]
     const datPath = path.join(loadFilesDir, 'Production Load File.dat')
     await fs.writeFile(datPath, toDat(table))
     await fs.writeFile(path.join(loadFilesDir, 'Production Load File.csv'), toCsv(table))
+    const opt = opticonRows(records, prefix, PAD)
+    if (opt.length) await fs.writeFile(path.join(loadFilesDir, 'Production Load File.opt'), toOpt(opt))
     result.loadFilePath = datPath
   }
 
