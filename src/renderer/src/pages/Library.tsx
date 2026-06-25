@@ -351,6 +351,26 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
           </button>
         </div>
 
+        <label className="block mt-5 text-[13px] text-ink-600">Input folders</label>
+        <button
+          onClick={() => void pickInputs()}
+          className="mt-1 flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-ink-600 text-sm text-slate-300 hover:border-accent hover:text-accent w-full justify-center"
+        >
+          <FolderPlus className="w-4 h-4" /> Add folder…
+        </button>
+        {folders.length > 0 && (
+          <ul className="mt-2 space-y-1">
+            {folders.map((f) => (
+              <li key={f} className="flex items-center justify-between text-[12px] text-slate-400 bg-ink-950 rounded px-2 py-1">
+                <span className="truncate">{f}</span>
+                <button onClick={() => setFolders((x) => x.filter((p) => p !== f))} className="text-ink-600 hover:text-red-400">
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
         {/* Reuse a saved config (.dslrules.json) — pre-fills every setting below, including
             the hand-curated attachment exclude/keep lists. */}
         {importedRules ? (
@@ -397,26 +417,6 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
           placeholder="e.g. Acme production — set 1"
           className="mt-1 w-full rounded-lg bg-ink-950 border border-ink-700 px-3 py-2 text-sm text-slate-100 focus:border-accent outline-none"
         />
-
-        <label className="block mt-4 text-[13px] text-ink-600">Input folders</label>
-        <button
-          onClick={() => void pickInputs()}
-          className="mt-1 flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-ink-600 text-sm text-slate-300 hover:border-accent hover:text-accent w-full justify-center"
-        >
-          <FolderPlus className="w-4 h-4" /> Add folder…
-        </button>
-        {folders.length > 0 && (
-          <ul className="mt-2 space-y-1">
-            {folders.map((f) => (
-              <li key={f} className="flex items-center justify-between text-[12px] text-slate-400 bg-ink-950 rounded px-2 py-1">
-                <span className="truncate">{f}</span>
-                <button onClick={() => setFolders((x) => x.filter((p) => p !== f))} className="text-ink-600 hover:text-red-400">
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
 
         <div className="mt-5 text-[13px] text-ink-600">Produce</div>
         <div className="mt-1 rounded-lg border border-ink-700/70 bg-ink-900/40 divide-y divide-ink-800/70">
