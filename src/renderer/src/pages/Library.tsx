@@ -237,13 +237,15 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const [folders, setFolders] = useState<string[]>([])
   const [output, setOutput] = useState('')
   const [outputTouched, setOutputTouched] = useState(false)
-  const [emailToPdf, setEmailToPdf] = useState(true)
+  // Defaults: exclude attachments/logos, the review index, and the production load file
+  // are on; everything else (convert emails to PDF, combine, highlights, AI) is off.
+  const [emailToPdf, setEmailToPdf] = useState(false)
   const [reviewIndex, setReviewIndex] = useState(true)
-  const [loadFile, setLoadFile] = useState(false)
+  const [loadFile, setLoadFile] = useState(true)
   const [highlights, setHighlights] = useState(false)
   const [aiEnrich, setAiEnrich] = useState(false)
   const [combine, setCombine] = useState(false)
-  const [excludeSignatures, setExcludeSignatures] = useState(false)
+  const [excludeSignatures, setExcludeSignatures] = useState(true)
   const [excludeAttachmentsText, setExcludeAttachmentsText] = useState('')
   const [batesPrefix, setBatesPrefix] = useState('DOC-')
   const [batesStart, setBatesStart] = useState('1')
