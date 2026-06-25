@@ -373,45 +373,6 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
           </ul>
         )}
 
-        {/* Reuse a saved config (.dslrules.json) — pre-fills every setting below, including
-            the hand-curated attachment exclude/keep lists. */}
-        {importedRules ? (
-          <div className="mt-4 flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/[0.07] px-3 py-2 text-[12.5px]">
-            <FileUp className="w-4 h-4 shrink-0 text-accent" />
-            <span className="min-w-0 flex-1 truncate text-slate-200">
-              Using config <span className="font-medium">{importedName}</span>
-              {importedRuleCount > 0 && (
-                <span className="text-ink-500"> · {importedRuleCount} attachment rule{importedRuleCount === 1 ? '' : 's'}</span>
-              )}
-            </span>
-            <button
-              onClick={() => importConfig()}
-              className="shrink-0 text-[11.5px] text-ink-500 hover:text-slate-200"
-              title="Choose a different config file"
-            >
-              Replace
-            </button>
-            <button
-              onClick={() => {
-                setImportedRules(null)
-                setImportedName('')
-              }}
-              className="shrink-0 text-ink-600 hover:text-red-400"
-              title="Stop using this config (settings already filled in are kept)"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        ) : (
-          <button
-            onClick={() => void importConfig()}
-            className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-ink-600 px-3 py-2 text-[12.5px] text-slate-300 hover:border-accent hover:text-accent"
-            title="Load settings from a previously exported .dslrules.json config"
-          >
-            <FileUp className="w-4 h-4" /> Import config…
-          </button>
-        )}
-
         <label className="block mt-5 text-[13px] text-ink-600">Name</label>
         <input
           value={name}
@@ -509,6 +470,47 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
             </div>
           </div>
         )}
+
+        {/* Reuse a saved config (.dslrules.json) — pre-fills every setting above, including
+            the hand-curated attachment exclude/keep lists. Secondary, so it sits at the end. */}
+        <div className="mt-6 pt-4 border-t border-ink-800/70">
+          {importedRules ? (
+            <div className="flex items-center gap-2 rounded-lg border border-accent/40 bg-accent/[0.07] px-3 py-2 text-[12.5px]">
+              <FileUp className="w-4 h-4 shrink-0 text-accent" />
+              <span className="min-w-0 flex-1 truncate text-slate-200">
+                Using config <span className="font-medium">{importedName}</span>
+                {importedRuleCount > 0 && (
+                  <span className="text-ink-500"> · {importedRuleCount} attachment rule{importedRuleCount === 1 ? '' : 's'}</span>
+                )}
+              </span>
+              <button
+                onClick={() => importConfig()}
+                className="shrink-0 text-[11.5px] text-ink-500 hover:text-slate-200"
+                title="Choose a different config file"
+              >
+                Replace
+              </button>
+              <button
+                onClick={() => {
+                  setImportedRules(null)
+                  setImportedName('')
+                }}
+                className="shrink-0 text-ink-600 hover:text-red-400"
+                title="Stop using this config (settings already filled in are kept)"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => void importConfig()}
+              className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-ink-600 px-3 py-2 text-[12.5px] text-ink-500 hover:border-accent hover:text-accent"
+              title="Load settings from a previously exported .dslrules.json config"
+            >
+              <FileUp className="w-4 h-4" /> Import config…
+            </button>
+          )}
+        </div>
 
         <div className="mt-6 flex justify-end gap-2">
           <button onClick={onClose} className="px-3.5 py-2 rounded-lg text-sm text-slate-300 hover:bg-ink-800">
