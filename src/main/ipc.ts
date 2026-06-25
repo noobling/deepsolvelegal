@@ -631,6 +631,17 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const res = await dialog.showOpenDialog(win!, { properties: ['openDirectory', 'createDirectory'] })
     return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
   })
+  ipcMain.handle('library:outputState', async (_e, p: string): Promise<{ exists: boolean; empty: boolean }> => {
+    const target = (p || '').trim()
+    if (!target) return { exists: false, empty: true }
+    try {
+      const entries = await fs.readdir(target)
+      // Ignore dotfiles (e.g. .DS_Store, our own .exclude-map.json) when judging "empty".
+      return { exists: true, empty: entries.filter((n) => !n.startsWith('.')).length === 0 }
+    } catch {
+      return { exists: false, empty: true }
+    }
+  })
   ipcMain.handle('library:create', async (_e, input: CreateCollectionInput): Promise<Collection> => {
     const now = Date.now()
     const id = 'col_' + now.toString(36) + Math.random().toString(36).slice(2, 6)

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore } from '../state/store'
 import ProgressBar from '../components/ProgressBar'
 import { formatEta } from '../lib/format'
@@ -237,6 +237,9 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const [folders, setFolders] = useState<string[]>([])
   const [output, setOutput] = useState('')
   const [outputTouched, setOutputTouched] = useState(false)
+  // True when the resolved output folder already exists and holds files — producing there
+  // would write into existing data, so we warn before letting the user proceed.
+  const [outputExistsNonEmpty, setOutputExistsNonEmpty] = useState(false)
   // Defaults: convert emails to PDF, exclude attachments/logos, the review index, and the
   // production load file are on; everything else (combine, highlights, AI) is off.
   const [emailToPdf, setEmailToPdf] = useState(true)
@@ -303,6 +306,23 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
   const sep = matterRoot.includes('\\') ? '\\' : '/'
   const defaultOutput = matterRoot ? `${matterRoot}${sep}${name.trim() || 'Untitled document set'}` : ''
   const outputValue = outputTouched ? output : defaultOutput
+
+  // Probe the output folder whenever it (or whether we even need one) changes, so the
+  // warning below stays in sync as the user types or toggles outputs on/off.
+  useEffect(() => {
+    let stale = false
+    const target = wantsOutput ? outputValue.trim() : ''
+    if (!target) {
+      setOutputExistsNonEmpty(false)
+      return
+    }
+    void window.api.library.outputState(target).then((s) => {
+      if (!stale) setOutputExistsNonEmpty(s.exists && !s.empty)
+    })
+    return () => {
+      stale = true
+    }
+  }, [outputValue, wantsOutput])
 
   const pickInputs = async (): Promise<void> => {
     const picked = await window.api.library.pickFolders()
@@ -425,6 +445,14 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
             <p className="mt-1 text-[11px] text-ink-600">
               Defaults to your matter folder + the set name. The bundle (PDFs, indexes, load file) is written here.
             </p>
+            {outputExistsNonEmpty && (
+              <p className="mt-2 flex items-start gap-1.5 text-[11.5px] text-amber-300 bg-amber-500/10 border border-amber-500/30 rounded-lg px-2.5 py-1.5">
+                <FolderOpen className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                <span>
+                  This folder already exists and contains files. Producing here will <span className="font-medium">add to and overwrite</span> its contents — pick a new or empty folder to keep that data safe.
+                </span>
+              </p>
+            )}
           </>
         )}
 
@@ -519,10 +547,14 @@ function NewJob({ onClose }: { onClose: () => void }): JSX.Element {
           <button
             onClick={() => void create()}
             disabled={!canCreate}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-ink-950 font-medium text-sm hover:bg-accent-soft disabled:opacity-40"
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm disabled:opacity-40 ${
+              outputExistsNonEmpty
+                ? 'bg-amber-500 text-ink-950 hover:bg-amber-400'
+                : 'bg-accent text-ink-950 hover:bg-accent-soft'
+            }`}
           >
             {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileStack className="w-4 h-4" />}
-            Process
+            {outputExistsNonEmpty ? 'Process anyway' : 'Process'}
           </button>
         </div>
       </div>

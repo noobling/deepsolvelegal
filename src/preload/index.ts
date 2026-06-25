@@ -86,6 +86,7 @@ const api: Api = {
     addSources: (id: string, paths: string[]) => ipcRenderer.invoke('library:addSources', id, paths),
     pickFolders: () => ipcRenderer.invoke('library:pickFolders'),
     pickOutput: () => ipcRenderer.invoke('library:pickOutput'),
+    outputState: (p: string) => ipcRenderer.invoke('library:outputState', p),
     onEvent: (cb: (e: IndexEvent) => void) => {
       const listener = (_e: unknown, payload: IndexEvent): void => cb(payload)
       ipcRenderer.on('index:event', listener)

@@ -633,6 +633,9 @@ export interface Api {
     pickFolders: () => Promise<string[]>
     /** Pick the single production output folder (created if needed). */
     pickOutput: () => Promise<string | null>
+    /** Whether an output path already exists and whether it holds any files — so the UI
+     *  can warn before a production overwrites/merges into existing data. */
+    outputState: (path: string) => Promise<{ exists: boolean; empty: boolean }>
     onEvent: (cb: (e: IndexEvent) => void) => () => void
   }
   export: (input: ExportInput) => Promise<ExportResult>
