@@ -1,8 +1,13 @@
 import { app, BrowserWindow, shell, dialog, protocol, net } from 'electron'
-import { autoUpdater } from 'electron-updater'
 import path from 'path'
 import { pathToFileURL } from 'url'
+import { createRequire } from 'module'
 import { appendFileSync } from 'fs'
+
+// electron-updater is CommonJS, but the bundled main process is ESM — a named ESM import
+// (`import { autoUpdater }`) throws "Named export not found" at runtime. Load it through
+// createRequire so the CJS module resolves correctly.
+const { autoUpdater } = createRequire(import.meta.url)('electron-updater')
 
 let mainWindow: BrowserWindow | null = null
 
@@ -104,8 +109,8 @@ app.whenReady().then(async () => {
   // — a failed check (offline, rate-limited) must never block startup.
   if (app.isPackaged) {
     autoUpdater.autoDownload = true
-    autoUpdater.on('error', (e) => diag(`autoUpdate error: ${e?.stack || e}`))
-    autoUpdater.checkForUpdatesAndNotify().catch((e) => diag(`autoUpdate check failed: ${e}`))
+    autoUpdater.on('error', (e: Error) => diag(`autoUpdate error: ${e?.stack || e}`))
+    autoUpdater.checkForUpdatesAndNotify().catch((e: unknown) => diag(`autoUpdate check failed: ${String(e)}`))
   }
 
   app.on('activate', () => {
