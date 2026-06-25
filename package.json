@@ -23,6 +23,7 @@
     "@superdoc-dev/react": "^1.12.0",
     "@syncfusion/ej2-react-documenteditor": "^33.2.13",
     "docx": "^9.5.1",
+    "electron-updater": "^6.8.9",
     "exceljs": "^4.4.0",
     "jimp": "^1.6.1",
     "mailparser": "^3.9.10",

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, shell, dialog, protocol, net } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import path from 'path'
 import { pathToFileURL } from 'url'
 import { appendFileSync } from 'fs'
@@ -97,6 +98,15 @@ app.whenReady().then(async () => {
     dialog.showErrorBox('DeepSolve Legal — startup error', String(err.stack || err))
   }
   createWindow()
+
+  // Packaged builds check GitHub Releases for a newer version and download it in the
+  // background, prompting to install on quit. No-op in dev (no app-update.yml). Best-effort
+  // — a failed check (offline, rate-limited) must never block startup.
+  if (app.isPackaged) {
+    autoUpdater.autoDownload = true
+    autoUpdater.on('error', (e) => diag(`autoUpdate error: ${e?.stack || e}`))
+    autoUpdater.checkForUpdatesAndNotify().catch((e) => diag(`autoUpdate check failed: ${e}`))
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
