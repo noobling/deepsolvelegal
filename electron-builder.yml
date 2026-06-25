@@ -11,7 +11,10 @@ files:
 win:
   target:
     - nsis
-  artifactName: ${productName}-${version}-setup.${ext}
+  # No spaces in the artifact name: GitHub rewrites spaces to dots on upload, which then
+  # mismatches the hyphenated name electron-updater writes into latest.yml and breaks the
+  # auto-update download. A literal hyphenated name stays identical end to end.
+  artifactName: DeepSolve-Legal-${version}-setup.${ext}
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
