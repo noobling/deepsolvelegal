@@ -19,23 +19,14 @@ export default function Sidebar(): JSX.Element {
       </div>
 
       <nav className="px-3 py-3 space-y-1">
-        <NavItem active={route === 'launchpad'} onClick={() => setRoute('launchpad')} icon={<LayoutGrid className="w-4 h-4" />}>
-          Workflows
-        </NavItem>
         <NavItem active={route === 'library' || route === 'collection' || route === 'highlights'} onClick={() => setRoute('library')} icon={<FolderCog className="w-4 h-4" />}>
           Documents
         </NavItem>
+        <NavItem active={route === 'launchpad'} onClick={() => setRoute('launchpad')} icon={<LayoutGrid className="w-4 h-4" />}>
+          Workflows
+        </NavItem>
         <NavItem active={route === 'settings'} onClick={() => setRoute('settings')} icon={<SettingsIcon className="w-4 h-4" />}>
           Settings
-        </NavItem>
-        <NavItem active={route === 'superdoc-spike'} onClick={() => setRoute('superdoc-spike')} icon={<FileText className="w-4 h-4" />}>
-          SuperDoc spike
-        </NavItem>
-        <NavItem active={route === 'syncfusion-spike'} onClick={() => setRoute('syncfusion-spike')} icon={<FileText className="w-4 h-4" />}>
-          Syncfusion spike
-        </NavItem>
-        <NavItem active={route === 'dotnet-word-spike'} onClick={() => setRoute('dotnet-word-spike')} icon={<FileText className="w-4 h-4" />}>
-          Word + .NET spike
         </NavItem>
       </nav>
 

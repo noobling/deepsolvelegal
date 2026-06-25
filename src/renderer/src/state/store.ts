@@ -13,7 +13,7 @@ import type {
   ToolActivity
 } from '@shared/types'
 
-export type Route = 'launchpad' | 'workspace' | 'settings' | 'library' | 'collection' | 'highlights' | 'superdoc-spike' | 'syncfusion-spike' | 'dotnet-word-spike'
+export type Route = 'launchpad' | 'workspace' | 'settings' | 'library' | 'collection' | 'highlights'
 
 /**
  * Live IPC subscriptions. Held at module scope so `init()` is idempotent:
@@ -272,7 +272,7 @@ interface AppState {
 }
 
 export const useStore = create<AppState>((set, get) => ({
-  route: 'launchpad',
+  route: 'library',
   ready: false,
   settings: null,
   keyPresent: false,
