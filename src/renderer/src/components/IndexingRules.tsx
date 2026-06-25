@@ -198,8 +198,8 @@ export default function IndexingRules({ c }: { c: CollectionDetail }): JSX.Eleme
 
       {open && (
         <ul className="px-3.5 pb-3 pt-0.5 space-y-2 text-[12px] leading-relaxed border-t border-ink-700/40">
-          <Rule icon={<FileText className="w-3.5 h-3.5" />} note="a file that can't be rendered gets a Bates-numbered slip-sheet so the sequence stays intact">
-            {emailToPdf ? 'Render every email and document to a PDF, in folder order' : 'Index files in place; copy natives through without PDF conversion'}
+          <Rule icon={<FileText className="w-3.5 h-3.5" />} note="only emails are rendered to PDF; every other format is indexed and produced as its native original">
+            {emailToPdf ? 'Render emails to PDF, in folder order — other document types are indexed, not converted' : 'Index files in place; copy natives through without PDF conversion'}
           </Rule>
 
           <Rule icon={<Paperclip className="w-3.5 h-3.5" />}>
