@@ -200,9 +200,9 @@ async function main(): Promise<void> {
 
   // ── Full buildProduction over REAL emails (content-based exclusion end-to-end) ──
   // Renders actual PDFs in this Electron process and exercises the new prescan → resolver
-  // → render → writeExcludedFolder path. Reads a local .eml folder (the user's APE set by
-  // default); skipped gracefully if it isn't present so the rest of the suite still runs.
-  const emlDir = process.env.DSL_E2E_EML_DIR || '/Users/davidyu/Downloads/sample-emails'
+  // → render → writeExcludedFolder path. Point DSL_E2E_EML_DIR at a local folder of .eml
+  // files to run it; skipped gracefully if unset/missing so the rest of the suite still runs.
+  const emlDir = process.env.DSL_E2E_EML_DIR || ''
   const listEml = async (d: string): Promise<string[]> => {
     const out: string[] = []
     for (const e of await fs.readdir(d, { withFileTypes: true }).catch(() => [])) {

@@ -6,8 +6,7 @@ import { Jimp } from 'jimp'
 //   - dHash:  perceptual identity for images. Robust to re-encoding/resizing, so two
 //             copies of the same logo that a mail client recompressed still match.
 // Validated on a real 738-email set: sha256 catches ~640 logos that filename|size misses;
-// the perceptual layer consolidates re-encoded variants on top of that. See
-// scripts/image-similarity-spike.mjs.
+// the perceptual layer consolidates re-encoded variants on top of that.
 
 /** Two dHashes within this many differing bits (of 64) are treated as the same image. */
 export const DHASH_THRESHOLD = 8
