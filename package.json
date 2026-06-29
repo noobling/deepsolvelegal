@@ -1,6 +1,6 @@
 {
   "name": "quantumlawgroup",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Quantum Law Group — an action-first legal AI desktop app powered by the Anthropic API.",
   "main": "./out/main/index.js",
   "author": "Quantum Law Group",
