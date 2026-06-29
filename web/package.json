@@ -13,6 +13,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "@xmldom/xmldom": "^0.9.8",
+    "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^4.10.38",
     "mammoth": "^1.9.0",
     "xlsx": "^0.18.5",

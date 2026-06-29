@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { pickDirectory, supportsDirectoryPicker } from '../lib/files'
+import { pickDirectory, supportsDirectoryPicker, walkFiles } from '../lib/files'
+import { extOf, INDEXABLE } from '../lib/extract'
 import { indexFolder, type IndexSource } from '../lib/indexerClient'
 import { listCollections, putCollection, deleteCollection, putIndex, getIndex } from '../lib/db'
 import { searchDocs } from '../lib/search'
-import { exportCsv, exportXlsx } from '../lib/export'
-import type { Collection, IndexPayload, SearchHit } from '../lib/types'
+import { exportCsv, exportXlsx, downloadBlob } from '../lib/export'
+import type { Collection, IndexPayload, IndexedDoc, SearchHit } from '../lib/types'
 
 interface Progress {
   phase: string
@@ -32,6 +33,9 @@ export default function Library(): React.JSX.Element {
   const [view, setView] = useState<'docs' | 'highlights'>('docs')
   const searchRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Original files for the set indexed THIS session — enables email→PDF and production.
+  // (Not persisted; opening a stored set won't have them until re-indexed.)
+  const filesRef = useRef<{ collectionId: string; getters: Map<string, () => Promise<File>> }>({ collectionId: '', getters: new Map() })
 
   useEffect(() => {
     void listCollections().then(setCollections)
@@ -71,6 +75,17 @@ export default function Library(): React.JSX.Element {
     setBusy(true)
     setProgress({ phase: 'Scanning', done: 0, total: 0 })
     try {
+      // Keep the original files reachable (in memory) for email→PDF / production.
+      const getters = new Map<string, () => Promise<File>>()
+      if ('files' in source) {
+        for (const f of source.files) getters.set(f.webkitRelativePath || f.name, () => Promise.resolve(f))
+      } else {
+        for await (const wf of walkFiles(source.dir)) {
+          if (INDEXABLE.has(extOf(wf.handle.name))) getters.set(wf.path, () => wf.handle.getFile())
+        }
+      }
+      filesRef.current = { collectionId: id, getters }
+
       const payload = await indexFolder(id, source, (m) =>
         setProgress({ phase: m.phase, done: m.done, total: m.total, currentFile: m.currentFile })
       )
@@ -129,6 +144,28 @@ export default function Library(): React.JSX.Element {
     if (activeId === c.id) {
       setActiveId(null)
       setIndex(null)
+    }
+  }
+
+  function fileGetter(docId: string): (() => Promise<File>) | undefined {
+    return filesRef.current.collectionId === activeId ? filesRef.current.getters.get(docId) : undefined
+  }
+
+  async function exportEmailPdf(doc: IndexedDoc): Promise<void> {
+    const getter = fileGetter(doc.id)
+    if (!getter) {
+      setError('Original file is not in memory — re-index this folder to export the email as PDF.')
+      return
+    }
+    setError(null)
+    try {
+      const file = await getter()
+      const { parseEmail, emailToPdf } = await import('../lib/email')
+      const email = await parseEmail(file, doc.ext)
+      const bytes = await emailToPdf(email)
+      downloadBlob(new Blob([bytes.slice()], { type: 'application/pdf' }), doc.name.replace(/\.[^.]+$/, '') + '.pdf')
+    } catch (e) {
+      setError('Email→PDF failed: ' + ((e as Error)?.message || e))
     }
   }
 
@@ -276,9 +313,20 @@ export default function Library(): React.JSX.Element {
                       <div key={h.doc.id} className="rounded-md border border-white/10 bg-white/[0.03] px-4 py-3">
                         <div className="flex items-center justify-between gap-3">
                           <div className="font-medium text-[15px] truncate">{h.doc.subject || h.doc.name}</div>
-                          <div className="text-[11px] text-ink-400 shrink-0">
-                            {h.doc.kind === 'email' ? '✉︎ ' : ''}
-                            {h.doc.ext.replace('.', '').toUpperCase()} · {fmtBytes(h.doc.size)}
+                          <div className="text-[11px] text-ink-400 shrink-0 flex items-center gap-2">
+                            {h.doc.kind === 'email' && (
+                              <button
+                                onClick={() => void exportEmailPdf(h.doc)}
+                                className="rounded border border-white/15 hover:bg-white/10 px-2 py-0.5 text-ink-200"
+                                title="Render this email to PDF"
+                              >
+                                → PDF
+                              </button>
+                            )}
+                            <span>
+                              {h.doc.kind === 'email' ? '✉︎ ' : ''}
+                              {h.doc.ext.replace('.', '').toUpperCase()} · {fmtBytes(h.doc.size)}
+                            </span>
                           </div>
                         </div>
                         {h.doc.from && (
