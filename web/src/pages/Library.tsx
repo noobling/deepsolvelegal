@@ -30,7 +30,11 @@ export default function Library(): React.JSX.Element {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [view, setView] = useState<'docs' | 'highlights'>('docs')
+  const [view, setView] = useState<'docs' | 'highlights' | 'produce'>('docs')
+  const [batesPrefix, setBatesPrefix] = useState('QLG')
+  const [batesStart, setBatesStart] = useState(1)
+  const [producing, setProducing] = useState<{ done: number; total: number } | null>(null)
+  const [prodResult, setProdResult] = useState<{ produced: number; excluded: number; begin: string; end: string } | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   // Original files for the set indexed THIS session — enables email→PDF and production.
@@ -169,6 +173,44 @@ export default function Library(): React.JSX.Element {
     }
   }
 
+  async function runProduction(): Promise<void> {
+    if (!index) return
+    if (filesRef.current.collectionId !== activeId) {
+      setError("Original files aren't in memory — re-index this folder, then produce (files aren't persisted).")
+      return
+    }
+    setError(null)
+    setProdResult(null)
+    const cfg = { prefix: batesPrefix.trim() || 'DOC', start: Math.max(1, batesStart || 1), pad: 6, custodian: active?.name || '' }
+    setProducing({ done: 0, total: index.docs.length })
+    try {
+      const { produce, buildCsv, buildDat } = await import('../lib/production')
+      const res = await produce(index.docs, (id) => fileGetter(id)?.(), cfg, (done, total) => setProducing({ done, total }))
+      const JSZip = (await import('jszip')).default
+      const zip = new JSZip()
+      const natives = zip.folder('NATIVES')!
+      for (const it of res.items) natives.file(it.pdfName, it.pdfBytes.slice())
+      zip.file('loadfile.csv', buildCsv(res))
+      zip.file('loadfile.dat', buildDat(res))
+      if (res.excluded.length) {
+        const esc = (v: string): string => (/[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v)
+        zip.file('EXCLUDED.csv', ['Name,Reason,ParentBates', ...res.excluded.map((e) => [e.name, e.reason, e.parent].map(esc).join(','))].join('\r\n'))
+      }
+      const blob = await zip.generateAsync({ type: 'blob' })
+      downloadBlob(blob, `${active?.name || 'production'}-bates.zip`)
+      setProdResult({
+        produced: res.items.length,
+        excluded: res.excluded.length,
+        begin: res.items[0]?.beginBates || '',
+        end: res.items[res.items.length - 1]?.endBates || ''
+      })
+    } catch (e) {
+      setError('Production failed: ' + ((e as Error)?.message || e))
+    } finally {
+      setProducing(null)
+    }
+  }
+
   const active = collections.find((c) => c.id === activeId) || null
 
   return (
@@ -292,6 +334,12 @@ export default function Library(): React.JSX.Element {
                 >
                   Highlights{index?.highlights.length ? ` (${index.highlights.length})` : ''}
                 </button>
+                <button
+                  onClick={() => setView('produce')}
+                  className={`px-3 py-2 -mb-px border-b-2 ${view === 'produce' ? 'border-accent text-ink-50' : 'border-transparent text-ink-400 hover:text-ink-200'}`}
+                >
+                  Produce
+                </button>
               </div>
 
               {view === 'docs' ? (
@@ -344,7 +392,7 @@ export default function Library(): React.JSX.Element {
                     )}
                   </div>
                 </>
-              ) : (
+              ) : view === 'highlights' ? (
                 <>
                   <div className="flex items-center justify-between mb-3">
                     <div className="text-sm text-ink-400">
@@ -396,6 +444,57 @@ export default function Library(): React.JSX.Element {
                     </div>
                   )}
                 </>
+              ) : (
+                <div className="max-w-xl space-y-4">
+                  <p className="text-sm text-ink-300 leading-relaxed">
+                    Generate a Bates-stamped production: PDFs are stamped, emails are rendered to PDF
+                    with their attachments as families, duplicate &amp; logo attachments are excluded,
+                    and Concordance <code>.DAT</code> / <code>.CSV</code> load files are included —
+                    packaged as a ZIP. Office files (.docx/.xlsx/.pptx) become Bates slip-sheets.
+                  </p>
+                  {filesRef.current.collectionId !== activeId && (
+                    <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[13px] text-amber-200">
+                      Re-index this folder first — production needs the original files, which aren&apos;t persisted across reloads.
+                    </div>
+                  )}
+                  <div className="flex gap-3">
+                    <label className="text-sm">
+                      <div className="text-ink-400 mb-1">Bates prefix</div>
+                      <input
+                        value={batesPrefix}
+                        onChange={(e) => setBatesPrefix(e.target.value)}
+                        className="rounded-md bg-white/5 border border-white/15 px-3 py-2 w-36 outline-none focus:border-accent"
+                      />
+                    </label>
+                    <label className="text-sm">
+                      <div className="text-ink-400 mb-1">Start #</div>
+                      <input
+                        type="number"
+                        value={batesStart}
+                        onChange={(e) => setBatesStart(parseInt(e.target.value) || 1)}
+                        className="rounded-md bg-white/5 border border-white/15 px-3 py-2 w-28 outline-none focus:border-accent"
+                      />
+                    </label>
+                  </div>
+                  <button
+                    disabled={!!producing}
+                    onClick={() => void runProduction()}
+                    className="rounded-md bg-accent hover:bg-accent-600 disabled:opacity-50 text-ink-900 font-medium px-4 py-2 text-sm"
+                  >
+                    {producing ? `Producing… ${producing.done}/${producing.total}` : 'Generate Bates production (ZIP)'}
+                  </button>
+                  {producing && (
+                    <div className="h-2 w-full rounded-full bg-white/10 overflow-hidden">
+                      <div className="h-full bg-accent transition-all" style={{ width: producing.total ? `${(producing.done / producing.total) * 100}%` : '8%' }} />
+                    </div>
+                  )}
+                  {prodResult && (
+                    <div className="rounded-md border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-100">
+                      ✓ Produced {prodResult.produced} document{prodResult.produced === 1 ? '' : 's'} (Bates {prodResult.begin}–{prodResult.end}).{' '}
+                      {prodResult.excluded > 0 ? `${prodResult.excluded} attachment(s) excluded as duplicates/logos.` : 'No attachments excluded.'} ZIP downloaded.
+                    </div>
+                  )}
+                </div>
               )}
             </>
           )}
