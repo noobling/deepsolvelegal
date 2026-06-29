@@ -22,7 +22,7 @@ async function listFiles(dir: string): Promise<string[]> {
 }
 
 async function run(label: string, over: Partial<Collection>): Promise<void> {
-  const inbox = path.join(os.homedir(), 'Documents', 'DeepSolve Demo', 'inbox')
+  const inbox = path.join(os.homedir(), 'Documents', 'Quantum Law Group Demo', 'inbox')
   const out = path.join(os.tmpdir(), 'dsl-excl-' + label + '-' + process.pid)
   await fs.rm(out, { recursive: true, force: true }).catch(() => {})
   const files = (await fs.readdir(inbox)).filter((f) => f.endsWith('.eml')).map((f) => path.join(inbox, f))

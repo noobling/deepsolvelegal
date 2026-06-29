@@ -2,7 +2,7 @@ import { app, BrowserWindow, shell, dialog, protocol, net } from 'electron'
 import path from 'path'
 import { pathToFileURL } from 'url'
 import { createRequire } from 'module'
-import { appendFileSync } from 'fs'
+import { appendFileSync, existsSync, cpSync } from 'fs'
 
 // electron-updater is CommonJS, but the bundled main process is ESM — a named ESM import
 // (`import { autoUpdater }`) throws "Named export not found" at runtime. Load it through
@@ -37,6 +37,32 @@ function diag(msg: string): void {
 process.on('uncaughtException', (e) => diag(`uncaughtException: ${e.stack || e}`))
 process.on('unhandledRejection', (e) => diag(`unhandledRejection: ${e}`))
 
+// One-time rebrand migration: this app used to be "DeepSolve Legal", which stored its data
+// under a differently-named userData folder. On a fresh Quantum Law Group install, copy the
+// old data (settings, API key, matters, library) across so existing users keep everything.
+// Guarded: only runs when the new folder has no settings yet, so it never clobbers live data.
+function migrateLegacyUserData(): void {
+  try {
+    const current = app.getPath('userData')
+    if (existsSync(path.join(current, 'settings.json'))) return // already initialised — skip
+    const parent = path.dirname(current)
+    // Cover both historical names: the dev/package name and the packaged productName.
+    for (const legacyName of ['deepsolvelegal', 'DeepSolve Legal']) {
+      const legacy = path.join(parent, legacyName)
+      if (legacy === current || !existsSync(legacy)) continue
+      // Copy only app-owned data, not Electron's caches/cookies/Local Storage (rebuilt on launch).
+      for (const entry of ['settings.json', 'anthropic.key', 'matters', 'library']) {
+        const src = path.join(legacy, entry)
+        if (existsSync(src)) cpSync(src, path.join(current, entry), { recursive: true })
+      }
+      diag(`migrated legacy userData: ${legacy} -> ${current}`)
+      return
+    }
+  } catch (e) {
+    diag(`legacy userData migration failed: ${(e as Error).stack || e}`)
+  }
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1380,
@@ -44,7 +70,7 @@ function createWindow(): void {
     minWidth: 1024,
     minHeight: 680,
     show: false,
-    title: 'DeepSolve Legal',
+    title: 'Quantum Law Group',
     backgroundColor: '#0b0f1a',
     titleBarStyle: 'default',
     webPreferences: {
@@ -82,6 +108,9 @@ function createWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  // Carry over data from the pre-rebrand "DeepSolve Legal" install, if present.
+  migrateLegacyUserData()
+
   // Serve dsfile://file/<encoded-absolute-path> by streaming that file off disk.
   protocol.handle('dsfile', (request) => {
     try {
@@ -100,7 +129,7 @@ app.whenReady().then(async () => {
   } catch (e) {
     const err = e as Error
     diag(`startup import failed: ${err.stack || err}`)
-    dialog.showErrorBox('DeepSolve Legal — startup error', String(err.stack || err))
+    dialog.showErrorBox('Quantum Law Group — startup error', String(err.stack || err))
   }
   createWindow()
 

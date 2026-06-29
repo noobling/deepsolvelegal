@@ -4,14 +4,14 @@
 # Usage:  npm run dist:win          (arm64, the dev machine's arch)
 #         npm run dist:win -- x64   (Intel/AMD build)
 #
-# Produces: dist\DeepSolve-Legal-<version>-win-<arch>.zip
+# Produces: dist\Quantum-Law-Group-<version>-win-<arch>.zip
 param([string]$Arch = 'arm64')
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 Set-Location $root
 $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
-$appName = 'DeepSolve Legal'
+$appName = 'Quantum Law Group'
 
 Write-Host "==> Compiling renderer + main (electron-vite)..." -ForegroundColor Cyan
 npx electron-vite build
@@ -63,14 +63,14 @@ if (Test-Path (Join-Path $root 'bundled.key')) {
 }
 
 Write-Host "==> Staging installer + payload..." -ForegroundColor Cyan
-$stage = "dist\DeepSolve-Legal"
+$stage = "dist\Quantum-Law-Group"
 if (Test-Path dist) { Remove-Item dist -Recurse -Force }
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 Copy-Item "app-build\$appName-win32-$Arch" -Destination "$stage\$appName" -Recurse
-Copy-Item installer\install.ps1, installer\uninstall.ps1, "installer\Install DeepSolve Legal.bat", installer\INSTALL.md -Destination $stage
+Copy-Item installer\install.ps1, installer\uninstall.ps1, "installer\Install Quantum Law Group.bat", installer\INSTALL.md -Destination $stage
 
 Write-Host "==> Zipping..." -ForegroundColor Cyan
-$zip = "dist\DeepSolve-Legal-$version-win-$Arch.zip"
+$zip = "dist\Quantum-Law-Group-$version-win-$Arch.zip"
 $sevenZip = "node_modules\7zip-bin\win\$Arch\7za.exe"
 if (-not (Test-Path $sevenZip)) { $sevenZip = "node_modules\7zip-bin\win\x64\7za.exe" }
 & $sevenZip a -tzip -mx=7 -bso0 -bsp0 $zip "$stage" | Out-Null

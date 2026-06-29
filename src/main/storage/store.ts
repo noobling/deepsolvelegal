@@ -20,7 +20,7 @@ function defaultSettings(): Settings {
     model: 'claude-opus-4-8',
     ollamaBaseUrl: 'http://127.0.0.1:11434',
     ollamaModel: '',
-    matterRoot: path.join(app.getPath('documents'), 'DeepSolve Legal'),
+    matterRoot: path.join(app.getPath('documents'), 'Quantum Law Group'),
     profile: '',
     autoApproveReads: true,
     documentEditor: 'superdoc'

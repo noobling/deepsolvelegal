@@ -22,7 +22,7 @@ export default function Launchpad(): JSX.Element {
         <header className="mb-8">
           <h1 className="font-serif text-3xl font-semibold text-slate-50">What do you need to do?</h1>
           <p className="text-ink-600 mt-2">
-            Pick a workflow to get a clear start — DeepSolve reads your documents and drafts the work product for you.
+            Pick a workflow to get a clear start — Quantum Law Group reads your documents and drafts the work product for you.
           </p>
           <div className="mt-5 relative max-w-xl">
             <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-600" />

@@ -9,7 +9,7 @@ registerLicense(import.meta.env.VITE_SYNCFUSION_LICENSE ?? '')
 // The local .NET sidecar (spike/DocEditorServer) converts a real tracked-changes
 // .docx → SFDT with full Word fidelity (tables, styles, numbering) AND preserves
 // the AI's <w:ins>/<w:del> redlines as native tracked-change revisions
-// (verified: author "DeepSolve AI", accept/reject suggestions, no watermark).
+// (verified: author "Quantum Law Group AI", accept/reject suggestions, no watermark).
 const SERVICE = 'http://localhost:5111/api/documenteditor/'
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
 

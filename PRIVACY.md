@@ -1,12 +1,12 @@
-# DeepSolve Legal — Data Handling & Privacy
+# Quantum Law Group — Data Handling & Privacy
 
-This document describes, accurately and without overstatement, how DeepSolve Legal handles
+This document describes, accurately and without overstatement, how Quantum Law Group handles
 data. It is intended for review by a law firm's IT, risk, or general-counsel function.
 
 ## TL;DR
 
 - **Local-first.** Your matters, the documents you work on, drafts, settings, and the document
-  Library index live **only on the user's computer**. DeepSolve operates **no server or cloud**
+  Library index live **only on the user's computer**. Quantum Law Group operates **no server or cloud**
   and never receives your data. There is **no analytics or telemetry** in the app.
 - **One external service: Anthropic.** To generate analysis and drafts, the text of the task you
   run — your instructions plus the documents you attach or have the assistant read for that task —
@@ -20,13 +20,13 @@ data. It is intended for review by a law firm's IT, risk, or general-counsel fun
 
 | Data | Location | Leaves the machine? |
 |---|---|---|
-| Matters, threads, drafts | `%APPDATA%\deepsolvelegal\matters\` (local JSON) | No |
-| Settings & practice profile | `%APPDATA%\deepsolvelegal\settings.json` | No |
-| Document Library index (BM25) | `%APPDATA%\deepsolvelegal\library\` (local JSON) | No |
-| Anthropic API key (user-entered) | `%APPDATA%\deepsolvelegal\anthropic.key`, encrypted with Windows **DPAPI** | No |
+| Matters, threads, drafts | `%APPDATA%\quantumlawgroup\matters\` (local JSON) | No |
+| Settings & practice profile | `%APPDATA%\quantumlawgroup\settings.json` | No |
+| Document Library index (BM25) | `%APPDATA%\quantumlawgroup\library\` (local JSON) | No |
+| Anthropic API key (user-entered) | `%APPDATA%\quantumlawgroup\anthropic.key`, encrypted with Windows **DPAPI** | No |
 | Exported Word/PDF/Excel | The folder you choose in Settings | No |
 
-There is no DeepSolve backend. Uninstalling and deleting `%APPDATA%\deepsolvelegal` removes all
+There is no Quantum Law Group backend. Uninstalling and deleting `%APPDATA%\quantumlawgroup` removes all
 local data.
 
 ## What is sent to Anthropic, and when

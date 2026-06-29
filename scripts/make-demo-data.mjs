@@ -6,7 +6,7 @@
 //   - images (imaged to PDF + native kept)
 //   - a real PDF attachment (passthrough)
 //   - a content doc that recurs in only 2 emails (kept, NOT mistaken for a logo)
-// No real client data — safe to record/share. Output: ~/Documents/DeepSolve Demo/inbox
+// No real client data — safe to record/share. Output: ~/Documents/Quantum Law Group Demo/inbox
 import { promises as fs } from 'fs'
 import path from 'path'
 import os from 'os'
@@ -14,7 +14,7 @@ import { Jimp } from 'jimp'
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import ExcelJS from 'exceljs'
 
-const OUT = path.join(os.homedir(), 'Documents', 'DeepSolve Demo', 'inbox')
+const OUT = path.join(os.homedir(), 'Documents', 'Quantum Law Group Demo', 'inbox')
 
 // A small banded image — enough entropy for a real perceptual hash, looks logo/photo-ish.
 async function banded(w, h, seed) {
@@ -108,7 +108,7 @@ function eml({ from, to, subject, date, bodyHtml, atts }) {
 }
 
 async function main() {
-  await fs.rm(path.join(os.homedir(), 'Documents', 'DeepSolve Demo'), { recursive: true, force: true }).catch(() => {})
+  await fs.rm(path.join(os.homedir(), 'Documents', 'Quantum Law Group Demo'), { recursive: true, force: true }).catch(() => {})
   await fs.mkdir(OUT, { recursive: true })
 
   // Shared assets

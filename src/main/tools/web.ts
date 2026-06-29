@@ -23,7 +23,7 @@ export const fetchUrl: ToolDef = {
   async run(args) {
     const url = str(args, 'url')
     try {
-      const res = await fetch(url, { headers: { 'User-Agent': 'DeepSolveLegal/0.1' } })
+      const res = await fetch(url, { headers: { 'User-Agent': 'QuantumLawGroup/0.1' } })
       if (!res.ok) return { summary: `HTTP ${res.status} for ${url}`, content: `Request failed: ${res.status} ${res.statusText}`, isError: true }
       const ct = res.headers.get('content-type') || ''
       const body = await res.text()

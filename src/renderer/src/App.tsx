@@ -21,7 +21,7 @@ export default function App(): JSX.Element {
   if (!ready) {
     return (
       <div className="h-full grid place-items-center text-ink-600">
-        <div className="text-sm tracking-wide">Loading DeepSolve Legal…</div>
+        <div className="text-sm tracking-wide">Loading Quantum Law Group…</div>
       </div>
     )
   }

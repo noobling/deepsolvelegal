@@ -34,9 +34,9 @@ const shell = (inner) => `<!doctype html><html><head><meta charset="utf-8"><styl
   .panel pre .b{color:#c9a24b}
 </style></head><body>${inner}</body></html>`
 
-const wordmark = '<div class="mark">DeepSolve Legal</div>'
+const wordmark = '<div class="mark">Quantum Law Group</div>'
 const pageSlide = (img, cap) => shell(`${wordmark}<div class="stage"><img src="${img}"></div><div class="cap"><span>${cap}</span></div>`)
-const titleSlide = () => shell(`${wordmark}<div class="center"><h1>DeepSolve Legal</h1><div class="sub">Local e-discovery production — a 90-second demo</div></div>`)
+const titleSlide = () => shell(`${wordmark}<div class="center"><h1>Quantum Law Group</h1><div class="sub">Local e-discovery production — a 90-second demo</div></div>`)
 const panelSlide = (title, pre) => shell(`${wordmark}<div class="panel"><h2>${title}</h2><pre>${pre}</pre></div>`)
 const closeSlide = () => shell(`${wordmark}<div class="center"><div class="big">5 emails &nbsp;→&nbsp; <b style="color:#c9a24b">10 Bates-stamped documents</b> &nbsp;(DEMO000001–000014)<br>.DAT metadata + .OPT image load file + Review Index<br><span style="color:#8b93a1">Everything runs 100% on-device.</span></div></div>`)
 

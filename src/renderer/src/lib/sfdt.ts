@@ -21,7 +21,7 @@ interface Revision {
   revisionId: string
 }
 
-const AUTHOR = 'DeepSolve AI'
+const AUTHOR = 'Quantum Law Group AI'
 const INLINE_RE = /(\*\*[^*]+\*\*|<ins>[\s\S]*?<\/ins>|<del>[\s\S]*?<\/del>)/g
 
 // Deterministic ids (no Math.random — keeps output stable for the same input).

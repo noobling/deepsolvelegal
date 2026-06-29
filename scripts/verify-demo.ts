@@ -22,8 +22,8 @@ async function tree(dir: string, prefix = ''): Promise<string[]> {
 
 async function main(): Promise<void> {
   await app.whenReady()
-  const inbox = path.join(os.homedir(), 'Documents', 'DeepSolve Demo', 'inbox')
-  const out = path.join(os.homedir(), 'Documents', 'DeepSolve Demo', 'output')
+  const inbox = path.join(os.homedir(), 'Documents', 'Quantum Law Group Demo', 'inbox')
+  const out = path.join(os.homedir(), 'Documents', 'Quantum Law Group Demo', 'output')
   await fs.rm(out, { recursive: true, force: true }).catch(() => {})
   const files = (await fs.readdir(inbox)).filter((f) => f.endsWith('.eml')).map((f) => path.join(inbox, f))
   const docs: IndexedDoc[] = []

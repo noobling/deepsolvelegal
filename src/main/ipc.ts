@@ -536,7 +536,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       const res = await dialog.showSaveDialog(win!, {
         title: 'Export processing rules',
         defaultPath: `${sanitize(c.name)} rules.dslrules.json`,
-        filters: [{ name: 'DeepSolve rules', extensions: ['dslrules.json', 'json'] }]
+        filters: [{ name: 'Quantum Law Group rules', extensions: ['dslrules.json', 'json'] }]
       })
       if (res.canceled || !res.filePath) return { ok: false, error: 'Cancelled.' }
       await fs.writeFile(res.filePath, JSON.stringify(rules, null, 2), 'utf8')
@@ -558,7 +558,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const res = await dialog.showOpenDialog(win!, {
       title: 'Import processing rules',
       properties: ['openFile'],
-      filters: [{ name: 'DeepSolve rules', extensions: ['dslrules.json', 'json'] }]
+      filters: [{ name: 'Quantum Law Group rules', extensions: ['dslrules.json', 'json'] }]
     })
     if (res.canceled || !res.filePaths[0]) return { ok: false, cancelled: true }
     let rules: ProcessingRules
@@ -570,7 +570,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       return { ok: false, error }
     }
     if (!rules || typeof rules !== 'object' || rules.version !== 1) {
-      const error = 'This file is not a DeepSolve rules file (version 1).'
+      const error = 'This file is not a Quantum Law Group rules file (version 1).'
       await dialog.showMessageBox(win!, { type: 'error', message: 'Import failed', detail: error })
       return { ok: false, error }
     }
@@ -591,7 +591,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
     const res = await dialog.showOpenDialog(win!, {
       title: 'Import processing rules',
       properties: ['openFile'],
-      filters: [{ name: 'DeepSolve rules', extensions: ['dslrules.json', 'json'] }]
+      filters: [{ name: 'Quantum Law Group rules', extensions: ['dslrules.json', 'json'] }]
     })
     if (res.canceled || !res.filePaths[0]) return { ok: false, cancelled: true }
     let rules: ProcessingRules
@@ -601,7 +601,7 @@ export function registerIpc(getWindow: () => BrowserWindow | null): void {
       return { ok: false, error: "That file isn't valid JSON, so it can't be a rules file." }
     }
     if (!rules || typeof rules !== 'object' || rules.version !== 1) {
-      return { ok: false, error: 'This file is not a DeepSolve rules file (version 1).' }
+      return { ok: false, error: 'This file is not a Quantum Law Group rules file (version 1).' }
     }
     return { ok: true, rules, fileName: path.basename(res.filePaths[0]) }
   })

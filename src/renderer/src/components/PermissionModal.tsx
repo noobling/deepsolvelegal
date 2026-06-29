@@ -15,7 +15,7 @@ export default function PermissionModal(): JSX.Element | null {
           </div>
           <div>
             <h3 className="font-medium text-slate-100">Permission needed</h3>
-            <p className="text-[13px] text-ink-600 mt-0.5">DeepSolve wants to: {title}</p>
+            <p className="text-[13px] text-ink-600 mt-0.5">Quantum Law Group wants to: {title}</p>
           </div>
         </div>
         <pre className="px-6 py-4 text-[12.5px] text-slate-300 whitespace-pre-wrap break-words max-h-48 overflow-y-auto">

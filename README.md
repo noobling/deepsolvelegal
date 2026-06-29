@@ -1,6 +1,6 @@
-# DeepSolve Legal
+# Quantum Law Group
 
-An action-first legal AI desktop app for Windows, powered by the Anthropic API. Instead of a blank chatbox, DeepSolve gives you a **launchpad of legal workflows** — pick an action ("Review a contract", "Draft a demand letter", "Respond to a DSAR", "Build a diligence table"), answer a short intake, and get a real, exportable work product. The feature set is modeled on Anthropic's [claude-for-legal](https://github.com/anthropics/claude-for-legal) plugin suite.
+An action-first legal AI desktop app for Windows, powered by the Anthropic API. Instead of a blank chatbox, Quantum Law Group gives you a **launchpad of legal workflows** — pick an action ("Review a contract", "Draft a demand letter", "Respond to a DSAR", "Build a diligence table"), answer a short intake, and get a real, exportable work product. The feature set is modeled on Anthropic's [claude-for-legal](https://github.com/anthropics/claude-for-legal) plugin suite.
 
 ## What it does
 
@@ -59,12 +59,12 @@ npm run dev        # launches the app with hot reload
 ## Build a distributable
 
 ```bash
-npm run dist:win              # arm64 (this machine) → dist\DeepSolve-Legal-<ver>-win-arm64.zip
+npm run dist:win              # arm64 (this machine) → dist\Quantum-Law-Group-<ver>-win-arm64.zip
 npm run dist:win -- x64       # Intel/AMD build
 ```
 
 This compiles the app, packages a self-contained folder with `@electron/packager`, bundles the
-per-user installer scripts, and zips it. End users either double-click **`Install DeepSolve Legal.bat`**
+per-user installer scripts, and zips it. End users either double-click **`Install Quantum Law Group.bat`**
 (per-user install, no admin), run `install.ps1` from a terminal, or run the `.exe` portably — see
 [installer/INSTALL.md](installer/INSTALL.md).
 
@@ -74,5 +74,5 @@ per-user installer scripts, and zips it. End users either double-click **`Instal
 
 ## Notes
 
-- DeepSolve produces **drafting assistance for legal professionals**, not legal advice to an end client. Outputs flag items needing licensed-attorney review.
+- Quantum Law Group produces **drafting assistance for legal professionals**, not legal advice to an end client. Outputs flag items needing licensed-attorney review.
 - `run_command` is the highest-risk capability and always asks before running.

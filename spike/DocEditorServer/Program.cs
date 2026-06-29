@@ -22,7 +22,7 @@ var app = builder.Build();
 app.UseCors(CorsPolicy);
 
 // Health check.
-app.MapGet("/", () => "DeepSolve DocEditor spike server — POST a .docx to /api/documenteditor/Import");
+app.MapGet("/", () => "Quantum Law Group DocEditor spike server — POST a .docx to /api/documenteditor/Import");
 
 // Import: multipart/form-data file upload -> SFDT JSON (full-fidelity).
 app.MapPost("/api/documenteditor/Import", (HttpRequest request) =>

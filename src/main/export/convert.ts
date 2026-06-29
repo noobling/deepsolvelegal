@@ -40,7 +40,7 @@ function parseInlineRuns(text: string): TextRun[] {
     })
 }
 
-const REDLINE_AUTHOR = 'DeepSolve AI'
+const REDLINE_AUTHOR = 'Quantum Law Group AI'
 let revisionId = 1
 
 /** Like parseInlineRuns, but emit <ins>/<del> as NATIVE Word tracked changes (w:ins/w:del). */

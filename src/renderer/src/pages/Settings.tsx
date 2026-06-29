@@ -331,7 +331,7 @@ export default function Settings(): JSX.Element {
               <Lock className="w-4 h-4 text-accent" /> Your controls
             </div>
             <ul className="text-[12px] text-slate-400 mt-1.5 space-y-1 leading-relaxed list-disc pl-4">
-              <li>DeepSolve has no server of its own; no analytics or telemetry.</li>
+              <li>Quantum Law Group has no server of its own; no analytics or telemetry.</li>
               <li>File writes and shell commands always ask before running.</li>
               <li>The Library index is built locally — documents leave only if you enable “AI summaries” on a collection.</li>
               <li>Nothing is read or sent until you start a workflow.</li>

@@ -13,7 +13,7 @@ export default function Sidebar(): JSX.Element {
           <Scale className="w-5 h-5 text-accent" />
         </div>
         <div>
-          <div className="font-serif text-[15px] leading-tight font-semibold">DeepSolve</div>
+          <div className="font-serif text-[15px] leading-tight font-semibold">Quantum Law Group</div>
           <div className="text-[11px] tracking-widest text-accent/80 uppercase">Legal</div>
         </div>
       </div>

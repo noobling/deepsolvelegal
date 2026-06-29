@@ -1,11 +1,11 @@
-# DeepSolve Legal — per-user installer (no administrator rights required).
+# Quantum Law Group — per-user installer (no administrator rights required).
 # Copies the app into %LOCALAPPDATA%\Programs and creates Start Menu + Desktop shortcuts.
 
 $ErrorActionPreference = 'Stop'
-$appName = 'DeepSolve Legal'
-$exeName = 'DeepSolve Legal.exe'
+$appName = 'Quantum Law Group'
+$exeName = 'Quantum Law Group.exe'
 
-# The app payload sits in a sibling folder named "DeepSolve Legal".
+# The app payload sits in a sibling folder named "Quantum Law Group".
 $src = Join-Path $PSScriptRoot $appName
 if (-not (Test-Path (Join-Path $src $exeName))) {
   Write-Host "Could not find '$exeName' next to this installer. Make sure you extracted the whole zip." -ForegroundColor Red
@@ -17,7 +17,7 @@ $dest = Join-Path $env:LOCALAPPDATA "Programs\$appName"
 Write-Host "Installing $appName ..." -ForegroundColor Cyan
 
 # Stop any running instance so files aren't locked.
-Get-Process -Name 'DeepSolve Legal' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process -Name 'Quantum Law Group' -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 500
 
 # Fresh copy.
@@ -37,14 +37,14 @@ foreach ($lnkDir in @(
   $sc = $ws.CreateShortcut($lnk)
   $sc.TargetPath = $exePath
   $sc.WorkingDirectory = $dest
-  $sc.Description = 'DeepSolve Legal — AI legal workflows'
+  $sc.Description = 'Quantum Law Group — AI legal workflows'
   $sc.Save()
 }
 
 Write-Host ""
 Write-Host "Installed to: $dest" -ForegroundColor Green
-Write-Host "You'll find 'DeepSolve Legal' in the Start Menu and on your Desktop." -ForegroundColor Green
+Write-Host "You'll find 'Quantum Law Group' in the Start Menu and on your Desktop." -ForegroundColor Green
 Write-Host ""
 
-$launch = Read-Host "Launch DeepSolve Legal now? (Y/n)"
+$launch = Read-Host "Launch Quantum Law Group now? (Y/n)"
 if ($launch -eq '' -or $launch -match '^[Yy]') { Start-Process $exePath }

@@ -44,7 +44,7 @@ export default function DataNotice({ compact = false }: { compact?: boolean }): 
         ) : (
           <>
             <span className="font-medium text-slate-100">Your data stays on this computer.</span> Matters, documents, and the
-            Library index are stored locally — there is no DeepSolve server. Running a workflow sends only that task&apos;s
+            Library index are stored locally — there is no Quantum Law Group server. Running a workflow sends only that task&apos;s
             content to Anthropic over an encrypted connection (not used to train models; Zero Data Retention available).
           </>
         )}
