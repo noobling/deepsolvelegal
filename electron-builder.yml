@@ -15,6 +15,18 @@ win:
   # mismatches the hyphenated name electron-updater writes into latest.yml and breaks the
   # auto-update download. A literal hyphenated name stays identical end to end.
   artifactName: Quantum-Law-Group-${version}-setup.${ext}
+  # In-house code signing (self-signed cert) via osslsigncode. The hook reads the cert
+  # path + password from env (WIN_CSC_PFX / WIN_CSC_PASS) — no secrets live in this repo.
+  # Removes the "Unknown publisher" SmartScreen warning on machines that trust the cert.
+  signtoolOptions:
+    sign: build/sign.cjs
+    signingHashAlgorithms:
+      - sha256
+    publisherName: Quantum Law Group
+  # Self-signed certs don't chain to a public CA, so electron-updater's signature check can
+  # fail on machines that haven't imported the cert. Download integrity is still enforced via
+  # the sha512 in latest.yml, so disable the extra publisher-signature gate for updates.
+  verifyUpdateCodeSignature: false
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

@@ -12,3 +12,11 @@ bundled.key
 .claude/settings.local.json
 .tmp-*
 scripts/.*.bundle.mjs
+
+# Code-signing material (keep OUT of the repo)
+*.pfx
+*.p12
+*.cer
+key.pem
+cert.pem
+pfx-password.txt
