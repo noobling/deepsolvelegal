@@ -34,9 +34,91 @@ export interface ProducedItem {
 export interface ExcludedItem { name: string; reason: string; parent: string }
 export interface ProductionResult { items: ProducedItem[]; excluded: ExcludedItem[]; config: ProductionConfig }
 
+/** One attachment surfaced for the manual include/exclude review step. */
+export interface ScannedAttachment {
+  key: string          // stable id: `${parentDocId}::${attachmentIndex}`
+  parentDocId: string
+  parentName: string
+  name: string
+  size: number
+  mime: string
+  isImage: boolean
+  sha256: string
+  autoReason: '' | 'duplicate' | 'logo/signature image'  // what auto-exclusion would flag
+  thumb?: string       // data URL for small images
+}
+
 const LOGO_MAX_BYTES = 150 * 1024
 const isImageName = (n: string): boolean => /\.(jpe?g|png|gif|bmp|tiff?)$/i.test(n)
 const isEmbeddable = (n: string): boolean => /\.(jpe?g|png)$/i.test(n)
+const THUMB_MAX = 96 * 1024  // only thumbnail small images, to keep the scan fast/light
+
+async function makeThumb(mime: string, bytes: Uint8Array): Promise<string | undefined> {
+  try {
+    const blob = new Blob([bytes.slice()], { type: mime || 'image/png' })
+    const bmp = await createImageBitmap(blob)
+    const max = 64
+    const s = Math.min(max / bmp.width, max / bmp.height, 1)
+    const w = Math.max(1, Math.round(bmp.width * s))
+    const h = Math.max(1, Math.round(bmp.height * s))
+    const canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    canvas.getContext('2d')!.drawImage(bmp, 0, 0, w, h)
+    bmp.close()
+    return canvas.toDataURL('image/png')
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Parse every email and list its attachments for the manual review step, pre-flagging the ones
+ * automatic exclusion would drop (exact duplicates + small repeated logo/signature images).
+ */
+export async function scanAttachments(
+  docs: IndexedDoc[],
+  getFile: (docId: string) => Promise<File> | undefined,
+  onProgress?: (done: number, total: number) => void
+): Promise<ScannedAttachment[]> {
+  const emails = docs.filter((d) => d.kind === 'email')
+  type Raw = { parentDocId: string; parentName: string; index: number; name: string; size: number; mime: string; isImage: boolean; hash: string; bytes: Uint8Array }
+  const raws: Raw[] = []
+  const hashCount = new Map<string, { count: number; size: number; img: boolean }>()
+  let done = 0
+  for (const doc of emails) {
+    const f = await getFile(doc.id)
+    if (f) {
+      const parsed = await parseEmail(f, doc.ext)
+      for (let i = 0; i < parsed.attachments.length; i++) {
+        const att = parsed.attachments[i]
+        const hash = await sha256(att.bytes)
+        const img = isImageName(att.name)
+        const cur = hashCount.get(hash) || { count: 0, size: att.bytes.length, img }
+        cur.count++
+        hashCount.set(hash, cur)
+        raws.push({ parentDocId: doc.id, parentName: doc.name, index: i, name: att.name, size: att.bytes.length, mime: att.mime, isImage: img, hash, bytes: att.bytes })
+      }
+    }
+    done++
+    onProgress?.(done, emails.length)
+  }
+  const isLogoHash = (h: string): boolean => {
+    const e = hashCount.get(h)
+    return !!e && e.img && e.size <= LOGO_MAX_BYTES && e.count >= 3
+  }
+  const seen = new Set<string>()
+  const out: ScannedAttachment[] = []
+  for (const r of raws) {
+    let autoReason: ScannedAttachment['autoReason'] = ''
+    if (isLogoHash(r.hash)) autoReason = 'logo/signature image'
+    else if (seen.has(r.hash)) autoReason = 'duplicate'
+    seen.add(r.hash)
+    const thumb = r.isImage && r.size <= THUMB_MAX ? await makeThumb(r.mime, r.bytes) : undefined
+    out.push({ key: `${r.parentDocId}::${r.index}`, parentDocId: r.parentDocId, parentName: r.parentName, name: r.name, size: r.size, mime: r.mime, isImage: r.isImage, sha256: r.hash, autoReason, thumb })
+  }
+  return out
+}
 
 async function sha256(bytes: Uint8Array): Promise<string> {
   const h = await crypto.subtle.digest('SHA-256', bytes.slice().buffer)
@@ -111,7 +193,11 @@ export async function produce(
   docs: IndexedDoc[],
   getFile: (docId: string) => Promise<File> | undefined,
   cfg: ProductionConfig,
-  onProgress: (done: number, total: number) => void
+  onProgress: (done: number, total: number) => void,
+  // Manual review result: attachment key (`${docId}::${index}`) → exclusion reason. When provided,
+  // attachments are excluded ONLY per this map (auto logo/duplicate detection is bypassed for them,
+  // since the user already reviewed those flags). When omitted, automatic exclusion applies.
+  manualExclude?: Map<string, string>
 ): Promise<ProductionResult> {
   const lib = await import('pdf-lib')
 
@@ -167,10 +253,16 @@ export async function produce(
       // Attachments (family members)
       let attBegin = ''
       let attEnd = ''
-      for (const att of parsed.attachments) {
+      for (let ai = 0; ai < parsed.attachments.length; ai++) {
+        const att = parsed.attachments[ai]
         const h = await sha256(att.bytes)
-        if (isLogo(h)) { excluded.push({ name: att.name, reason: 'logo/signature image', parent: emailItem.beginBates }); continue }
-        if (seen.has(h)) { excluded.push({ name: att.name, reason: 'duplicate', parent: emailItem.beginBates }); continue }
+        if (manualExclude) {
+          const key = `${doc.id}::${ai}`
+          if (manualExclude.has(key)) { excluded.push({ name: att.name, reason: manualExclude.get(key) || 'excluded', parent: emailItem.beginBates }); continue }
+        } else {
+          if (isLogo(h)) { excluded.push({ name: att.name, reason: 'logo/signature image', parent: emailItem.beginBates }); continue }
+          if (seen.has(h)) { excluded.push({ name: att.name, reason: 'duplicate', parent: emailItem.beginBates }); continue }
+        }
         seen.add(h)
         const pdf = await pdfFromFileBytes(lib, att.name, att.bytes)
         const it = await addItem(pdf, counter, att.name, true, { subject: att.name })

@@ -35,6 +35,10 @@ export default function Library(): React.JSX.Element {
   const [batesStart, setBatesStart] = useState(1)
   const [producing, setProducing] = useState<{ done: number; total: number } | null>(null)
   const [prodResult, setProdResult] = useState<{ produced: number; excluded: number; begin: string; end: string } | null>(null)
+  // Manual attachment review (Produce tab): scanned list + the set of keys the user has excluded.
+  const [scanned, setScanned] = useState<import('../lib/production').ScannedAttachment[] | null>(null)
+  const [scanning, setScanning] = useState<{ done: number; total: number } | null>(null)
+  const [excludedKeys, setExcludedKeys] = useState<Set<string>>(new Set())
   const searchRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   // Original files for the set indexed THIS session — enables email→PDF and production.
@@ -133,6 +137,9 @@ export default function Library(): React.JSX.Element {
     setActiveId(c.id)
     setQuery('')
     setView('docs')
+    setScanned(null)
+    setExcludedKeys(new Set())
+    setProdResult(null)
     setError(c.status === 'error' ? c.error || 'This set failed to index.' : null)
     setIndex(null)
     if (c.status === 'ready') {
@@ -173,6 +180,37 @@ export default function Library(): React.JSX.Element {
     }
   }
 
+  async function runScan(): Promise<void> {
+    if (!index) return
+    if (filesRef.current.collectionId !== activeId) {
+      setError("Original files aren't in memory — re-index this folder, then scan (files aren't persisted).")
+      return
+    }
+    setError(null)
+    setScanned(null)
+    setScanning({ done: 0, total: index.docs.filter((d) => d.kind === 'email').length })
+    try {
+      const { scanAttachments } = await import('../lib/production')
+      const list = await scanAttachments(index.docs, (id) => fileGetter(id)?.(), (done, total) => setScanning({ done, total }))
+      setScanned(list)
+      // Pre-exclude exactly what automatic exclusion would have dropped; the user adjusts from there.
+      setExcludedKeys(new Set(list.filter((a) => a.autoReason).map((a) => a.key)))
+    } catch (e) {
+      setError('Attachment scan failed: ' + ((e as Error)?.message || e))
+    } finally {
+      setScanning(null)
+    }
+  }
+
+  function toggleExcluded(key: string): void {
+    setExcludedKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
+
   async function runProduction(): Promise<void> {
     if (!index) return
     if (filesRef.current.collectionId !== activeId) {
@@ -185,7 +223,15 @@ export default function Library(): React.JSX.Element {
     setProducing({ done: 0, total: index.docs.length })
     try {
       const { produce, buildCsv, buildDat } = await import('../lib/production')
-      const res = await produce(index.docs, (id) => fileGetter(id)?.(), cfg, (done, total) => setProducing({ done, total }))
+      // If the user ran a scan, honor their picks; otherwise fall back to automatic exclusion.
+      let manualExclude: Map<string, string> | undefined
+      if (scanned) {
+        manualExclude = new Map()
+        for (const a of scanned) {
+          if (excludedKeys.has(a.key)) manualExclude.set(a.key, a.autoReason || 'manually excluded')
+        }
+      }
+      const res = await produce(index.docs, (id) => fileGetter(id)?.(), cfg, (done, total) => setProducing({ done, total }), manualExclude)
       const JSZip = (await import('jszip')).default
       const zip = new JSZip()
       const natives = zip.folder('NATIVES')!
@@ -445,12 +491,13 @@ export default function Library(): React.JSX.Element {
                   )}
                 </>
               ) : (
-                <div className="max-w-xl space-y-4">
+                <div className="max-w-3xl space-y-4">
                   <p className="text-sm text-ink-300 leading-relaxed">
                     Generate a Bates-stamped production: PDFs are stamped, emails are rendered to PDF
-                    with their attachments as families, duplicate &amp; logo attachments are excluded,
-                    and Concordance <code>.DAT</code> / <code>.CSV</code> load files are included —
-                    packaged as a ZIP. Office files (.docx/.xlsx/.pptx) become Bates slip-sheets.
+                    with their attachments as families, and Concordance <code>.DAT</code> /{' '}
+                    <code>.CSV</code> load files are included — packaged as a ZIP. Office files
+                    (.docx/.xlsx/.pptx) become Bates slip-sheets. <strong>Scan attachments</strong> to
+                    review and choose which email attachments to include or exclude before producing.
                   </p>
                   {filesRef.current.collectionId !== activeId && (
                     <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[13px] text-amber-200">
@@ -476,6 +523,70 @@ export default function Library(): React.JSX.Element {
                       />
                     </label>
                   </div>
+
+                  {/* Step 1 — manual attachment review */}
+                  <div className="rounded-lg border border-white/10 bg-white/[0.02] p-4 space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-medium text-ink-100">Attachment review</div>
+                        <div className="text-[12px] text-ink-400">
+                          Optional. Pick which email attachments to include in the production.
+                        </div>
+                      </div>
+                      <button
+                        disabled={!!scanning || filesRef.current.collectionId !== activeId}
+                        onClick={() => void runScan()}
+                        className="rounded-md border border-white/15 bg-white/5 hover:bg-white/10 disabled:opacity-50 px-3 py-2 text-sm whitespace-nowrap"
+                      >
+                        {scanning ? `Scanning… ${scanning.done}/${scanning.total}` : scanned ? 'Re-scan' : 'Scan attachments'}
+                      </button>
+                    </div>
+
+                    {scanned && scanned.length === 0 && (
+                      <div className="text-[13px] text-ink-400">No email attachments found in this set.</div>
+                    )}
+
+                    {scanned && scanned.length > 0 && (
+                      <>
+                        <div className="flex flex-wrap items-center gap-2 text-[12px]">
+                          <span className="text-ink-400">
+                            {scanned.length - excludedKeys.size} of {scanned.length} included
+                          </span>
+                          <span className="text-ink-600">·</span>
+                          <button className="text-accent hover:underline" onClick={() => setExcludedKeys(new Set())}>Include all</button>
+                          <button className="text-accent hover:underline" onClick={() => setExcludedKeys(new Set(scanned.map((a) => a.key)))}>Exclude all</button>
+                          <button className="text-accent hover:underline" onClick={() => setExcludedKeys(new Set(scanned.filter((a) => a.autoReason === 'duplicate').map((a) => a.key)))}>Only duplicates</button>
+                          <button className="text-accent hover:underline" onClick={() => setExcludedKeys(new Set(scanned.filter((a) => a.autoReason).map((a) => a.key)))}>Reset to suggested</button>
+                        </div>
+                        <div className="max-h-80 overflow-auto rounded-md border border-white/10 divide-y divide-white/5">
+                          {scanned.map((a) => {
+                            const included = !excludedKeys.has(a.key)
+                            return (
+                              <label key={a.key} className="flex items-center gap-3 px-3 py-2 hover:bg-white/[0.03] cursor-pointer">
+                                <input type="checkbox" checked={included} onChange={() => toggleExcluded(a.key)} className="accent-accent shrink-0" />
+                                {a.thumb ? (
+                                  <img src={a.thumb} alt="" className="h-9 w-9 rounded object-cover bg-white/5 shrink-0" />
+                                ) : (
+                                  <div className="h-9 w-9 rounded bg-white/5 grid place-items-center text-[10px] text-ink-400 shrink-0">
+                                    {(a.name.split('.').pop() || '?').slice(0, 4).toUpperCase()}
+                                  </div>
+                                )}
+                                <div className="min-w-0 flex-1">
+                                  <div className={`text-sm truncate ${included ? 'text-ink-100' : 'text-ink-500 line-through'}`}>{a.name}</div>
+                                  <div className="text-[11px] text-ink-500 truncate">{fmtBytes(a.size)} · in {a.parentName}</div>
+                                </div>
+                                {a.autoReason && (
+                                  <span className="shrink-0 rounded-full bg-amber-500/15 text-amber-200 text-[10px] px-2 py-0.5">{a.autoReason}</span>
+                                )}
+                                <span className={`shrink-0 text-[11px] ${included ? 'text-green-300' : 'text-ink-500'}`}>{included ? 'Include' : 'Exclude'}</span>
+                              </label>
+                            )
+                          })}
+                        </div>
+                      </>
+                    )}
+                  </div>
+
                   <button
                     disabled={!!producing}
                     onClick={() => void runProduction()}
@@ -491,7 +602,7 @@ export default function Library(): React.JSX.Element {
                   {prodResult && (
                     <div className="rounded-md border border-green-500/30 bg-green-500/10 px-4 py-3 text-sm text-green-100">
                       ✓ Produced {prodResult.produced} document{prodResult.produced === 1 ? '' : 's'} (Bates {prodResult.begin}–{prodResult.end}).{' '}
-                      {prodResult.excluded > 0 ? `${prodResult.excluded} attachment(s) excluded as duplicates/logos.` : 'No attachments excluded.'} ZIP downloaded.
+                      {prodResult.excluded > 0 ? `${prodResult.excluded} attachment(s) excluded${scanned ? ' per your review' : ' as duplicates/logos'}.` : 'No attachments excluded.'} ZIP downloaded.
                     </div>
                   )}
                 </div>
