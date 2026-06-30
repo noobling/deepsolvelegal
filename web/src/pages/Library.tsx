@@ -39,6 +39,10 @@ export default function Library(): React.JSX.Element {
   const [scanned, setScanned] = useState<import('../lib/production').ScannedAttachment[] | null>(null)
   const [scanning, setScanning] = useState<{ done: number; total: number } | null>(null)
   const [excludedKeys, setExcludedKeys] = useState<Set<string>>(new Set())
+  // Attachment preview modal (bytes are re-read from the parent email on demand, not held in `scanned`).
+  const [preview, setPreview] = useState<{ name: string; size: number; viewer: 'image' | 'pdf' | 'text' | 'none'; url?: string; text?: string } | null>(null)
+  const [previewBusy, setPreviewBusy] = useState(false)
+  const previewUrlRef = useRef<string | null>(null)
   const searchRef = useRef<HTMLInputElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   // Original files for the set indexed THIS session — enables email→PDF and production.
@@ -48,6 +52,9 @@ export default function Library(): React.JSX.Element {
   useEffect(() => {
     void listCollections().then(setCollections)
   }, [])
+
+  // Revoke any outstanding attachment-preview object URL when the component unmounts.
+  useEffect(() => () => { if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current) }, [])
 
   // <input webkitdirectory> needs the attribute set imperatively (not a typed JSX prop).
   useEffect(() => {
@@ -140,6 +147,7 @@ export default function Library(): React.JSX.Element {
     setScanned(null)
     setExcludedKeys(new Set())
     setProdResult(null)
+    closePreview()
     setError(c.status === 'error' ? c.error || 'This set failed to index.' : null)
     setIndex(null)
     if (c.status === 'ready') {
@@ -209,6 +217,52 @@ export default function Library(): React.JSX.Element {
       else next.add(key)
       return next
     })
+  }
+
+  function closePreview(): void {
+    if (previewUrlRef.current) { URL.revokeObjectURL(previewUrlRef.current); previewUrlRef.current = null }
+    setPreview(null)
+  }
+
+  async function openPreview(a: import('../lib/production').ScannedAttachment): Promise<void> {
+    if (!index) return
+    const getter = fileGetter(a.parentDocId)
+    if (!getter) { setError('Original file is not in memory — re-index this folder to preview attachments.'); return }
+    setError(null)
+    setPreviewBusy(true)
+    setPreview({ name: a.name, size: a.size, viewer: 'none' })
+    try {
+      const doc = index.docs.find((d) => d.id === a.parentDocId)
+      if (!doc) throw new Error('Parent email not found')
+      const file = await getter()
+      const { parseEmail } = await import('../lib/email')
+      const parsed = await parseEmail(file, doc.ext)
+      const idx = parseInt(a.key.split('::')[1], 10)
+      const att = parsed.attachments[idx]
+      if (!att) throw new Error('Attachment not found')
+      if (previewUrlRef.current) { URL.revokeObjectURL(previewUrlRef.current); previewUrlRef.current = null }
+      const ext = a.name.slice(a.name.lastIndexOf('.')).toLowerCase()
+      if (a.isImage) {
+        const url = URL.createObjectURL(new Blob([att.bytes.slice()], { type: att.mime || 'image/png' }))
+        previewUrlRef.current = url
+        setPreview({ name: a.name, size: a.size, viewer: 'image', url })
+      } else if (ext === '.pdf') {
+        const url = URL.createObjectURL(new Blob([att.bytes.slice()], { type: 'application/pdf' }))
+        previewUrlRef.current = url
+        setPreview({ name: a.name, size: a.size, viewer: 'pdf', url })
+      } else {
+        const { extractText } = await import('../lib/extract')
+        const ex = await extractText(new File([att.bytes.slice()], a.name, { type: att.mime }))
+        const url = URL.createObjectURL(new Blob([att.bytes.slice()], { type: att.mime || 'application/octet-stream' }))
+        previewUrlRef.current = url
+        setPreview({ name: a.name, size: a.size, viewer: ex.text.trim() ? 'text' : 'none', url, text: ex.text })
+      }
+    } catch (e) {
+      setError('Preview failed: ' + ((e as Error)?.message || e))
+      closePreview()
+    } finally {
+      setPreviewBusy(false)
+    }
   }
 
   async function runProduction(): Promise<void> {
@@ -562,24 +616,27 @@ export default function Library(): React.JSX.Element {
                           {scanned.map((a) => {
                             const included = !excludedKeys.has(a.key)
                             return (
-                              <label key={a.key} className="flex items-center gap-3 px-3 py-2 hover:bg-white/[0.03] cursor-pointer">
-                                <input type="checkbox" checked={included} onChange={() => toggleExcluded(a.key)} className="accent-accent shrink-0" />
-                                {a.thumb ? (
-                                  <img src={a.thumb} alt="" className="h-9 w-9 rounded object-cover bg-white/5 shrink-0" />
-                                ) : (
-                                  <div className="h-9 w-9 rounded bg-white/5 grid place-items-center text-[10px] text-ink-400 shrink-0">
-                                    {(a.name.split('.').pop() || '?').slice(0, 4).toUpperCase()}
+                              <div key={a.key} className="flex items-center gap-3 px-3 py-2 hover:bg-white/[0.03]">
+                                <input type="checkbox" checked={included} onChange={() => toggleExcluded(a.key)} className="accent-accent shrink-0 cursor-pointer" />
+                                <button type="button" onClick={() => void openPreview(a)} title="Preview attachment" className="flex items-center gap-3 min-w-0 flex-1 text-left group">
+                                  {a.thumb ? (
+                                    <img src={a.thumb} alt="" className="h-9 w-9 rounded object-cover bg-white/5 shrink-0" />
+                                  ) : (
+                                    <div className="h-9 w-9 rounded bg-white/5 grid place-items-center text-[10px] text-ink-400 shrink-0">
+                                      {(a.name.split('.').pop() || '?').slice(0, 4).toUpperCase()}
+                                    </div>
+                                  )}
+                                  <div className="min-w-0 flex-1">
+                                    <div className={`text-sm truncate group-hover:text-accent ${included ? 'text-ink-100' : 'text-ink-500 line-through'}`}>{a.name}</div>
+                                    <div className="text-[11px] text-ink-500 truncate">{fmtBytes(a.size)} · in {a.parentName}</div>
                                   </div>
-                                )}
-                                <div className="min-w-0 flex-1">
-                                  <div className={`text-sm truncate ${included ? 'text-ink-100' : 'text-ink-500 line-through'}`}>{a.name}</div>
-                                  <div className="text-[11px] text-ink-500 truncate">{fmtBytes(a.size)} · in {a.parentName}</div>
-                                </div>
+                                </button>
                                 {a.autoReason && (
                                   <span className="shrink-0 rounded-full bg-amber-500/15 text-amber-200 text-[10px] px-2 py-0.5">{a.autoReason}</span>
                                 )}
-                                <span className={`shrink-0 text-[11px] ${included ? 'text-green-300' : 'text-ink-500'}`}>{included ? 'Include' : 'Exclude'}</span>
-                              </label>
+                                <button type="button" onClick={() => void openPreview(a)} className="shrink-0 text-[11px] text-ink-300 hover:text-accent border border-white/10 rounded px-2 py-0.5">Preview</button>
+                                <span className={`shrink-0 text-[11px] w-12 text-right ${included ? 'text-green-300' : 'text-ink-500'}`}>{included ? 'Include' : 'Exclude'}</span>
+                              </div>
                             )
                           })}
                         </div>
@@ -611,6 +668,40 @@ export default function Library(): React.JSX.Element {
           )}
         </div>
       </main>
+
+      {/* Attachment preview modal */}
+      {preview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-6" onClick={closePreview}>
+          <div className="bg-ink-900 border border-white/15 rounded-lg shadow-xl w-full max-w-4xl max-h-[88vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-white/10">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm text-ink-100 truncate">{preview.name}</div>
+                <div className="text-[11px] text-ink-500">{fmtBytes(preview.size)}</div>
+              </div>
+              {preview.url && (
+                <a href={preview.url} download={preview.name} className="text-[12px] text-ink-300 hover:text-accent border border-white/10 rounded px-2 py-1">Download</a>
+              )}
+              <button onClick={closePreview} className="text-ink-300 hover:text-ink-50 text-lg leading-none px-2" aria-label="Close">×</button>
+            </div>
+            <div className="flex-1 overflow-auto p-4 grid place-items-center">
+              {previewBusy ? (
+                <div className="text-sm text-ink-400">Loading preview…</div>
+              ) : preview.viewer === 'image' ? (
+                <img src={preview.url} alt={preview.name} className="max-w-full max-h-[72vh] object-contain" />
+              ) : preview.viewer === 'pdf' ? (
+                <iframe src={preview.url} title={preview.name} className="w-full h-[72vh] bg-white rounded" />
+              ) : preview.viewer === 'text' ? (
+                <pre className="w-full whitespace-pre-wrap break-words text-[13px] text-ink-200 leading-relaxed font-mono">{preview.text}</pre>
+              ) : (
+                <div className="text-center text-sm text-ink-400 space-y-2">
+                  <p>No inline preview available for this file type.</p>
+                  {preview.url && <a href={preview.url} download={preview.name} className="inline-block text-accent hover:underline">Download to view</a>}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
